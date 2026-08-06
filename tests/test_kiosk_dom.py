@@ -5,10 +5,13 @@ types card values into a hidden sink, and a human typing a PUID. Which one owns
 focus is not expressible in a Python test, and getting it wrong silently
 misroutes a member's ID as a card number — so it is tested here, for real.
 
-Requires node and jsdom (`npm install --no-save jsdom`); skipped without them.
+Requires node and jsdom (`npm ci`); skipped without them, unless
+REQUIRE_DOM_TESTS=1 is set — CI sets it so a missing install fails loudly
+instead of silently dropping this file's coverage.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,10 +30,18 @@ ENROLL_JS = ROOT / "app" / "static" / "enroll.js"
 
 node = shutil.which("node")
 jsdom_installed = (ROOT / "node_modules" / "jsdom").exists()
+_missing = "node" if not node else "jsdom" if not jsdom_installed else None
+
+if _missing and os.environ.get("REQUIRE_DOM_TESTS") == "1":
+    raise RuntimeError(
+        f"REQUIRE_DOM_TESTS=1 but {_missing} is missing. These tests guard the "
+        "kiosk's keyboard focus routing; skipping them in CI would look "
+        "identical to passing. Run `npm ci`."
+    )
 
 pytestmark = pytest.mark.skipif(
-    not node or not jsdom_installed,
-    reason="needs node and jsdom (npm install --no-save jsdom)",
+    _missing is not None,
+    reason=f"needs node and jsdom ({_missing} missing; run `npm ci`)",
 )
 
 

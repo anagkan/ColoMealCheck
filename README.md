@@ -277,7 +277,7 @@ never eaten here is not the most recently seen.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-npm install --no-save jsdom       # optional; enables the browser JavaScript tests
+npm ci                            # jsdom, for the browser JavaScript tests
 .venv/bin/python -m pytest        # 336 tests, ~15s
 ```
 
@@ -296,8 +296,11 @@ half-typed digits to the next card scan. Both have happened.
 The rule the tests pin down: **the reader sink owns the keyboard only on the
 idle and result screens.** On any screen with something to type into, the human
 owns it — and on every screen transition back, focus is *forcibly* reclaimed
-and both buffers cleared, rather than politely requested. Skipped if node or
-jsdom is missing.
+and both buffers cleared, rather than politely requested.
+
+Skipped if node or jsdom is missing, so contributors without node still get a
+clean run. Set `REQUIRE_DOM_TESTS=1` to turn that skip into a hard error — CI
+sets it, because there a missing install is indistinguishable from a pass.
 
 It also covers the meal banner's two countdowns. Both count down from a
 *duration* the server supplies, re-synced every minute, rather than from a

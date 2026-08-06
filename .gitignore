@@ -33,8 +33,10 @@ coverage.xml
 .hypothesis/
 
 # --- Node (kiosk DOM tests) ---
+# package-lock.json is deliberately tracked: it pins the exact jsdom tree so
+# CI and a fresh clone resolve the same versions the DOM harnesses were written
+# against.
 node_modules/
-package-lock.json
 npm-debug.log*
 yarn-error.log*
 
