@@ -3,12 +3,12 @@
    band that says the whole answer before you read a word of it. */
 
 :root {
-  --bg: #10131a;
-  --panel: #1a1f2b;
-  --panel-2: #232937;
-  --ink: #f2f5fa;
-  --ink-dim: #9aa5b8;
-  --line: #303849;
+  --bg: #000985;
+  --panel: #0f2089;
+  --panel-2: #0b1868;
+  --ink: #ffffff;
+  --ink-dim: #c7d0f5;
+  --line: #2846c9;
 
   --ok: #1f9d55;
   --ok-ink: #d8f5e4;
@@ -19,26 +19,44 @@
   --info: #2c5fa8;
   --info-ink: #dbe8fb;
 
-  /* Colonial's colours, used as accents only — never as status signals. */
-  --club: #7c9cc4;
+  /* Colonial's gold, used as accents only — never as status signals. The
+     status bands below are the only thing allowed to answer a check-in, and
+     gold sitting next to green or red must never be mistaken for a third
+     answer. --gold-ink is the near-black that rides on top of it: gold is too
+     bright to carry white text at button sizes. */
+  --gold: #f5cc00;
+  --gold-dark: #d8a900;
+  --gold-ink: #241d00;
 
-  /* Heights of the meal banner and the guest-meal footer, subtracted from the
-     stage so the idle screen still centres in what is left of the viewport. */
-  --banner-h: 66px;
-  --foot-h: 84px;
 }
 
 * { box-sizing: border-box; }
 
+/* Every screen, popup and optional control on this kiosk is shown and hidden
+   with the `hidden` attribute — which is only a `display: none` in the browser's
+   own stylesheet, so any rule here that sets a display of its own silently
+   beats it. That has caught this file three separate times (the result card
+   sitting on the idle screen, the guest popup's empty host row, the enrollment
+   page's camera buttons offering "Take photo" with no camera running), so it is
+   settled once here rather than patched per selector as each one is noticed. */
+[hidden] { display: none !important; }
+
 /* The page scrolls. An earlier revision locked it with overflow:hidden and a
    fixed-height stage, which cut off the bottom of the taller panels on a
    laptop screen — the guest and enrollment actions became unreachable. */
+/* A flex column so the leftover height is something the layout hands out on
+   purpose rather than whatever falls off the end. See #stage and .kiosk-foot
+   below for how it is split. */
 html, body {
   margin: 0;
-  min-height: 100%;
   background: var(--bg);
   color: var(--ink);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+body {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* Off-screen rather than hidden: an input with display:none cannot hold focus,
@@ -63,8 +81,19 @@ html, body {
   flex-wrap: wrap;
 }
 
-.bar-left { display: flex; flex-direction: column; gap: 0.15rem; }
-.club { font-size: 1.15rem; font-weight: 650; letter-spacing: 0.01em; color: var(--club); }
+/* The crest sits beside the club's name rather than above it, so the whole
+   identity block stays one line tall and the header keeps its height on a
+   narrow screen. */
+.bar-left { display: flex; align-items: center; gap: 0.875rem; }
+.bar-id { display: flex; flex-direction: column; gap: 0.15rem; }
+.crest {
+  width: 40px;
+  height: 40px;
+  object-fit: cover;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.club { font-size: 1.15rem; font-weight: 650; letter-spacing: 0.01em; color: var(--gold); }
 .service { font-size: 0.95rem; color: var(--ink-dim); }
 .bar-right { display: flex; align-items: center; gap: 1.25rem; }
 .clock { font-size: 1.5rem; font-variant-numeric: tabular-nums; }
@@ -76,7 +105,7 @@ html, body {
   padding: 0.4rem 0.85rem;
   border-radius: 8px;
 }
-.bar-link:hover { color: var(--ink); border-color: var(--club); }
+.bar-link:hover { color: var(--ink); border-color: var(--gold); }
 
 .offline {
   font-size: 0.8rem;
@@ -118,8 +147,15 @@ html, body {
   opacity: 0.92;
 }
 
+/* Takes two thirds of the page's spare height and centres in it, so a third
+   lands above the screen's content and a third below it. The footer takes the
+   remaining third and puts all of it under its buttons, which leaves the three
+   gaps down the page — banner to crest, panel to guest buttons, guest buttons
+   to the credit line — the same size as each other at every screen height.
+   Anything fixed here has to be mirrored by .kiosk-foot's padding-bottom, or
+   the last of the three drifts out of step with the other two. */
 #stage {
-  min-height: calc(100vh - 76px - var(--banner-h) - var(--foot-h));
+  flex: 2 1 auto;
   display: grid;
   place-items: center;
   padding: 1.75rem;
@@ -135,28 +171,29 @@ html, body {
   align-items: center;
   gap: 1.25rem;
 }
-/* Screens are shown and hidden with the `hidden` attribute, which the
-   display:flex above would otherwise override — leaving the result card sitting
-   empty on the idle screen. Same reason as .modal-backdrop[hidden] below. */
-.screen[hidden] { display: none; }
 
 /* ---------- idle ---------- */
 
 .idle { gap: 2.5rem; }
 .tap-target { text-align: center; }
-.tap-icon {
-  width: 108px;
-  height: 108px;
-  fill: var(--club);
-  opacity: 0.9;
+/* The crest is what a member already looks for on the door, so it is also what
+   marks the spot on the idle screen. It keeps the breathe the old tap glyph
+   had: a kiosk that never moves reads as a kiosk that has frozen, and the
+   member's first question at a dark screen is whether it is on at all. */
+.tap-crest {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 50%;
+  box-shadow: 0 0 0 6px var(--panel), 0 0 0 7px var(--line);
   animation: breathe 2.6s ease-in-out infinite;
 }
 @keyframes breathe {
-  0%, 100% { transform: translateY(0); opacity: 0.75; }
+  0%, 100% { transform: translateY(0); opacity: 0.8; }
   50% { transform: translateY(-8px); opacity: 1; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .tap-icon { animation: none; }
+  .tap-crest { animation: none; }
 }
 .idle h1 { font-size: 3rem; margin: 0.75rem 0 0.35rem; font-weight: 640; }
 .sub { color: var(--ink-dim); font-size: 1.05rem; margin: 0; }
@@ -171,7 +208,7 @@ html, body {
   border-radius: 10px;
   cursor: pointer;
 }
-.ghost-btn:hover { border-color: var(--club); color: var(--ink); }
+.ghost-btn:hover { border-color: var(--gold); color: var(--ink); }
 
 /* ---------- result ---------- */
 
@@ -236,8 +273,8 @@ html, body {
   padding: 0.9rem 1.75rem;
   border-radius: 10px;
   border: none;
-  background: var(--club);
-  color: #0d1117;
+  background: var(--gold);
+  color: var(--gold-ink);
   font-weight: 600;
   cursor: pointer;
   text-decoration: none;
@@ -249,6 +286,8 @@ html, body {
   color: var(--ink-dim);
 }
 .action-btn.big-btn { font-size: 1.3rem; padding: 1rem 2.25rem; }
+.action-btn:hover { background: var(--gold-dark); }
+.action-btn.subtle:hover { background: transparent; border-color: var(--gold); color: var(--ink); }
 
 /* ---------- panels ---------- */
 
@@ -257,10 +296,16 @@ html, body {
   border: 1px solid var(--line);
   border-radius: 18px;
   padding: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
   align-items: stretch;
   width: 100%;
 }
 .panel.narrow { max-width: 620px; }
+/* A heading and the line explaining it are one thought, so they sit closer to
+   each other than to the rest of the panel. */
+.panel-head { display: flex; flex-direction: column; gap: 0.35rem; }
 .panel h2 { margin: 0; font-size: 1.9rem; }
 .text-input {
   font-size: 1.3rem;
@@ -280,6 +325,10 @@ html, body {
 }
 .text-input::placeholder { color: #5d6779; letter-spacing: normal; }
 .panel-actions { display: flex; gap: 0.85rem; flex-wrap: wrap; align-items: center; }
+/* Centred only here. The idle panel is a single column a member reads top to
+   bottom under the crest; the modals and the enrollment steps are staff forms,
+   where the actions line up on the left edge every other field starts at. */
+#manual .panel-actions { justify-content: center; }
 .warn { color: var(--warn-ink); background: rgba(199,125,10,0.18);
         padding: 0.75rem 1rem; border-radius: 10px; margin: 0; }
 .override-box { display: flex; flex-direction: column; gap: 0.75rem; }
@@ -291,15 +340,47 @@ html, body {
    there is no result on screen to hang a button off. The alumni button sits
    beside it: an alum arrives with nobody to be attached to, so their meal is
    never reachable from a member's result screen at all. */
+/* The other half of #stage's arrangement: takes the last third of the spare
+   height and keeps its buttons at the top of it, so the whole third falls
+   between them and the credit line. The 1.75rem below matches the 1.75rem of
+   stage padding above the buttons — the two gaps are equal only while those
+   two numbers are. */
 .kiosk-foot {
+  flex: 1 1 auto;
   display: flex;
   justify-content: center;
+  align-items: flex-start;
+  align-content: flex-start;
   gap: 1rem;
   flex-wrap: wrap;
   padding: 0 1.75rem 1.75rem;
 }
+/* Raised off the background rather than outlined like the other secondary
+   buttons: these two are the only controls on the idle screen that nobody is
+   led to by a card tap, so they have to be findable without being loud enough
+   to compete with the reader. */
 #guestMealBtn,
-#alumniMealBtn { min-width: 240px; font-size: 1.15rem; }
+#alumniMealBtn {
+  min-width: 240px;
+  font-size: 1.05rem;
+  background: var(--panel);
+  color: var(--ink);
+  font-weight: 600;
+  padding: 1rem 1.5rem;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
+}
+
+/* Last line on the page, below the fold of everything that matters. Whoever
+   inherits this kiosk needs a name to ask about it. */
+.kiosk-credit {
+  text-align: center;
+  font-size: 0.8rem;
+  color: var(--ink-dim);
+  opacity: 0.7;
+  margin: 0;
+  padding: 0.75rem 1.75rem;
+  border-top: 1px solid var(--line);
+}
 
 .modal-backdrop {
   position: fixed;
@@ -312,9 +393,6 @@ html, body {
   background: rgba(6, 8, 13, 0.74);
   overflow-y: auto;
 }
-/* The popup is shown and hidden with the `hidden` attribute, which display:flex
-   would otherwise override. */
-.modal-backdrop[hidden] { display: none; }
 
 .modal {
   width: min(640px, 100%);
@@ -339,7 +417,7 @@ html, body {
 .check input[type="checkbox"] {
   width: 1.4rem;
   height: 1.4rem;
-  accent-color: var(--club);
+  accent-color: var(--gold);
   cursor: pointer;
   flex-shrink: 0;
 }
@@ -353,9 +431,6 @@ html, body {
   gap: 0.75rem;
   flex-wrap: wrap;
 }
-/* Same trap as .screen[hidden]: without this, the popup opened from the footer
-   button shows an empty host row before anyone has been picked. */
-.modal .chosen[hidden] { display: none; }
 #guestHostResults { max-height: 220px; margin-top: 0.6rem; }
 #guestHostResults:empty { display: none; }
 
@@ -375,8 +450,8 @@ html, body {
   width: 1.9rem;
   height: 1.9rem;
   border-radius: 999px;
-  background: var(--club);
-  color: #0d1117;
+  background: var(--gold);
+  color: var(--gold-ink);
   font-size: 1rem;
   font-weight: 700;
   flex-shrink: 0;
@@ -405,7 +480,7 @@ html, body {
   cursor: pointer;
 }
 .mode-btn:hover { color: var(--ink); }
-.mode-btn.is-on { background: var(--club); color: #0d1117; font-weight: 650; }
+.mode-btn.is-on { background: var(--gold); color: var(--gold-ink); font-weight: 650; }
 
 .field-grid {
   display: grid;
@@ -445,7 +520,7 @@ select.text-input { appearance: none; }
   cursor: pointer;
   flex-wrap: wrap;
 }
-.search-results li:hover { border-color: var(--club); }
+.search-results li:hover { border-color: var(--gold); }
 .search-results li.muted-row { cursor: default; color: var(--ink-dim); }
 .search-results li.muted-row:hover { border-color: var(--line); }
 .search-results .who { font-size: 1.15rem; }
@@ -462,7 +537,7 @@ select.text-input { appearance: none; }
 .link-btn {
   background: none;
   border: none;
-  color: var(--club);
+  color: var(--gold);
   cursor: pointer;
   font: inherit;
   text-decoration: underline;
