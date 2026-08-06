@@ -1,5 +1,11 @@
 FROM python:3.12-slim
 
+# Attaches the published package to the repository on GHCR, which is what makes
+# the repository's collaborator list govern who can pull it. Without this the
+# package is a free-floating thing with an access list of its own, kept in step
+# with the repository's by hand and forgotten the first time someone is added.
+LABEL org.opencontainers.image.source=https://github.com/anagkan/ColoMealCheck
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
