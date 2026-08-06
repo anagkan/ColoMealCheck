@@ -112,6 +112,61 @@ card value across to `/enroll`, so nobody has to tap twice.
 Two containers, no reverse proxy: Uvicorn serves the API, the pages and the
 photos directly. Postgres and the photo directory are on named volumes.
 
+### Running from the published image
+
+For someone who wants to try the kiosk without a copy of the source — a friend
+testing it, or a spare laptop that has Docker and nothing else.
+`docker-compose.deploy.yml` pulls a built image from GHCR instead of building
+`api` from this directory, and reads the same `.env` as the file above.
+
+The image is private, so pulling it needs a GitHub token with `read:packages`:
+
+```bash
+docker login ghcr.io -u <your-github-username>
+docker compose -f docker-compose.deploy.yml up -d
+docker compose -f docker-compose.deploy.yml logs api   # admin password, once
+```
+
+Access is governed by this repository's collaborator list rather than by a
+permission list of its own, which is what the `org.opencontainers.image.source`
+label in the Dockerfile buys: it links the package to the repository, so adding
+someone here is all it takes.
+
+The tag in that file is pinned rather than `:latest`. Someone testing a build
+should keep getting that build when they restart, instead of being moved onto
+whatever was pushed while they were reading.
+
+Publishing a new version:
+
+```bash
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/anagkan/colomealcheck:0.2.0 \
+  -t ghcr.io/anagkan/colomealcheck:latest \
+  --push .
+```
+
+Both architectures, always. This is built on an Apple Silicon Mac and will be
+run on whatever the club has lying around; an image pushed for one architecture
+fails on the other with `exec format error`, which says nothing about what
+actually went wrong. That needs a builder using the `docker-container` driver —
+the default one silently cannot produce a multi-architecture manifest, and the
+`--platform` flag above appears to be accepted either way:
+
+```bash
+docker buildx create --name colomeal --driver docker-container --bootstrap --use
+```
+
+Then bump the pinned tag in `docker-compose.deploy.yml` to match, and check the
+result before handing it to anyone:
+
+```bash
+docker buildx imagetools inspect ghcr.io/anagkan/colomealcheck:0.2.0
+```
+
+Both `linux/amd64` and `linux/arm64` should be listed. The `unknown/unknown`
+entries alongside them are build provenance, not stray platforms.
+
 ### Kiosk laptop
 
 ```bash
