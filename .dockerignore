@@ -1,0 +1,23 @@
+# The Dockerfile copies four things: requirements.txt, alembic.ini, alembic/
+# and app/. Everything else in this directory is context the daemon copies
+# across on every build and then throws away — .venv/ and node_modules/ alone
+# are 113MB of the 116MB here.
+#
+# Written as an allow-list rather than a list of things to skip. A COPY added
+# to the Dockerfile that this file has not been told about fails the build
+# loudly and immediately; a deny-list that someone forgets to update fails by
+# silently making builds slow again, which nobody ever notices.
+*
+
+!requirements.txt
+!alembic.ini
+!alembic
+!app
+
+# Re-excluded after the un-ignores above, which would otherwise sweep them
+# back in. Stale bytecode compiled against the host's Python is worse than
+# useless inside the image: it is the interpreter's cache of files it already
+# has, keyed to a path and a version that may not match.
+**/__pycache__
+**/*.pyc
+**/.DS_Store
