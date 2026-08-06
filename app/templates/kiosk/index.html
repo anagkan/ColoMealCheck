@@ -17,11 +17,14 @@
 
   <header class="bar">
     <div class="bar-left">
-      <span class="club">Colonial Club</span>
-      <span id="serviceLabel" class="service">
-        {% if period %}Serving {{ period.name }} until {{ period.end_time.strftime('%-I:%M %p') }}
-        {% else %}Not currently serving{% endif %}
-      </span>
+      <img class="crest" src="/static/crest.png" alt="Colonial Club crest">
+      <div class="bar-id">
+        <span class="club">Colonial Club</span>
+        <span id="serviceLabel" class="service">
+          {% if period %}Serving {{ period.name }} until {{ period.end_time.strftime('%-I:%M %p') }}
+          {% else %}Not currently serving{% endif %}
+        </span>
+      </div>
     </div>
     <div class="bar-right">
       <span id="offlineBadge" class="offline" hidden></span>
@@ -47,9 +50,7 @@
 
     <section id="idle" class="screen idle">
       <div class="tap-target">
-        <svg viewBox="0 0 24 24" class="tap-icon" aria-hidden="true">
-          <path d="M12 2a1 1 0 0 1 1 1v9.6l2.5-1.4a2 2 0 0 1 2.7 2.8l-4 6A4 4 0 0 1 11 22H9a5 5 0 0 1-5-5v-5a1 1 0 0 1 2 0v3l1-1V3a1 1 0 0 1 2 0v7h1V3a1 1 0 0 1 1-1z"/>
-        </svg>
+        <img class="tap-crest" src="/static/crest.png" alt="" aria-hidden="true">
         <h1>Tap your TigerCard</h1>
         <p class="sub">Hold your card flat against the reader</p>
       </div>
@@ -58,8 +59,10 @@
            itself rather than behind a button: a member whose card has failed is
            already stuck, and one more tap to find the box is one too many. -->
       <div id="manual" class="panel narrow">
-        <h2>Enter your Princeton ID</h2>
-        <p class="sub">Type the 9-digit number printed on your TigerCard.</p>
+        <div class="panel-head">
+          <h2>Enter your Princeton ID</h2>
+          <p class="sub">Type the 9-digit number printed on your TigerCard.</p>
+        </div>
         <!-- A PUID is exactly nine decimal digits. maxlength and pattern stop most
              of what a member can type; kiosk.js enforces the same rule on every
              keystroke and again on submit, because neither attribute holds against
@@ -110,6 +113,8 @@
          to and nothing to ask a host for. -->
     <button id="alumniMealBtn" class="ghost-btn">Alumni Meal</button>
   </footer>
+
+  <p class="kiosk-credit">Made by Anagh Kanagala '28, Assistant House Manager</p>
 
   <!-- Guest meals are a popup rather than a screen of their own. They interrupt
        whatever the kiosk was showing — usually the "already checked in" result
@@ -198,7 +203,7 @@
     <div class="modal panel" role="dialog" aria-modal="true"
          aria-labelledby="alumniModalTitle">
       <h2 id="alumniModalTitle">Alumni Meal</h2>
-      <p class="sub small">Not tied to a member — the alum eats on their own account.</p>
+      <p class="sub small">Not tied to a member, alums eat for free!</p>
 
       <div class="field-grid">
         <div class="field">
