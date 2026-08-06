@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Admin{% endblock %} — ColoMealCheck</title>
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+<nav class="nav">
+  <a class="brand" href="/admin">Colonial<span>MealCheck</span></a>
+  <div class="links">
+    <a href="/admin">Today</a>
+    <a href="/admin/members">Members</a>
+    <a href="/admin/analytics">Analytics</a>
+    <a href="/admin/reports">Reports</a>
+    <a href="/admin/schedule">Schedule</a>
+    {% if user and user.is_admin %}
+      <a href="/admin/settings">Settings</a>
+      <a href="/admin/audit">Audit</a>
+    {% endif %}
+    <a href="/" target="_blank" rel="noopener">Kiosk ↗</a>
+  </div>
+  <form method="post" action="/logout" class="logout">
+    <span class="who">{{ user.display_name or user.username }}</span>
+    <button type="submit">Sign out</button>
+  </form>
+</nav>
+
+<main class="wrap">
+  {% block content %}{% endblock %}
+</main>
+</body>
+</html>

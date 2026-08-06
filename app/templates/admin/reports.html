@@ -1,0 +1,106 @@
+{% extends "admin/base.html" %}
+{% block title %}Reports{% endblock %}
+{% block content %}
+
+<header class="page-head">
+  <div><h1>Reports</h1><p class="muted">Everything here exports as CSV.</p></div>
+  <form class="inline" method="get" action="/admin/reports">
+    <label class="tiny">Week of <input type="date" name="week" value="{{ week_start }}"></label>
+    <label class="tiny">Month in <input type="date" name="month" value="{{ month_start }}"></label>
+    <button type="submit">Update</button>
+  </form>
+</header>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Weekly usage — {{ week_start | prettydate }} to {{ week_end | prettydate }}</h2>
+    <a class="btn" href="/admin/reports/weekly-usage.csv?week={{ week_start }}">CSV</a>
+  </div>
+  <table class="grid tight">
+    <thead>
+      <tr><th>Member</th><th>Plan</th><th>Used</th><th>Left</th><th>Over</th><th>Guests</th></tr>
+    </thead>
+    <tbody>
+      {% for r in week_rows %}
+      <tr>
+        <td><a href="/admin/members/{{ r.member.id }}">{{ r.member.full_name }}</a></td>
+        <td class="muted">{{ r.member.plan_type | planlabel }}</td>
+        <td class="num">{{ r.used }}</td>
+        <td class="num">{{ r.remaining if r.remaining is not none else '—' }}</td>
+        <td class="num">{% if r.over_by %}<span class="chip warn">+{{ r.over_by }}</span>{% endif %}</td>
+        <td class="num">{{ r.guest_meals or '' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<div class="cols">
+  <section class="card">
+    <div class="card-head">
+      <h2>Overages — {{ month_start.strftime('%B %Y') }}</h2>
+      <a class="btn" href="/admin/reports/overages.csv?month={{ month_start }}">CSV</a>
+    </div>
+    <table class="grid tight">
+      <thead><tr><th>Member</th><th>Plan</th><th>Meals over</th></tr></thead>
+      <tbody>
+        {% for member, count in overages %}
+        <tr>
+          <td><a href="/admin/members/{{ member.id }}">{{ member.full_name }}</a></td>
+          <td class="muted">{{ member.plan_type | planlabel }}</td>
+          <td class="num">{{ count }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="3" class="muted">Nobody went over this month.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Guest meals — {{ month_start.strftime('%B %Y') }}</h2>
+      <a class="btn" href="/admin/reports/guests.csv?month={{ month_start }}">CSV</a>
+    </div>
+    <table class="grid tight">
+      <thead><tr><th>Host</th><th>Guests hosted</th></tr></thead>
+      <tbody>
+        {% for member, count in guest_rows %}
+        <tr>
+          <td><a href="/admin/members/{{ member.id }}">{{ member.full_name }}</a></td>
+          <td class="num">{{ count }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="2" class="muted">No guest meals this month.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Not yet enrolled ({{ gaps | length }})</h2>
+    <a class="btn" href="/admin/reports/enrollment-gaps.csv">CSV</a>
+  </div>
+  <p class="muted small">
+    Active members with no card linked. They can still eat by typing their PUID at the kiosk —
+    this is the list to work through, not a list of people being turned away.
+  </p>
+  <table class="grid tight">
+    <thead><tr><th>Member</th><th>PUID</th><th>Year</th></tr></thead>
+    <tbody>
+      {% for m in gaps %}
+      <tr>
+        <td><a href="/admin/members/{{ m.id }}">{{ m.full_name }}</a></td>
+        <td class="num">{{ m.puid }}</td>
+        <td class="num">{{ m.class_year or '—' }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="muted">Everyone active has a card linked.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% endblock %}

@@ -1,0 +1,82 @@
+{% extends "admin/base.html" %}
+{% block title %}Members{% endblock %}
+{% block content %}
+
+<header class="page-head">
+  <div><h1>Members</h1><p class="muted">{{ members | length }} shown</p></div>
+  <form class="inline" method="get" action="/admin/members">
+    <input name="q" value="{{ q }}" placeholder="Name, PUID or NetID">
+    <select name="status_filter">
+      <option value="">Any status</option>
+      {% for s in statuses %}
+        <option value="{{ s }}" {% if s == status_filter %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    <button type="submit">Search</button>
+  </form>
+</header>
+
+<details class="card">
+  <summary>Add a member</summary>
+  <form method="post" action="/admin/members" class="form-grid">
+    <label>First name <input name="first_name" required></label>
+    <label>Last name <input name="last_name" required></label>
+    <label>PUID <input name="puid" required></label>
+    <label>NetID <input name="netid" placeholder="ak9981" maxlength="8"
+                       autocapitalize="off" autocorrect="off" spellcheck="false"></label>
+    <label>Class year <input name="class_year" inputmode="numeric" placeholder="2028"></label>
+    <label>Meal plan
+      <select name="plan_type">
+        {% for p in plans %}<option value="{{ p }}">{{ p | planlabel }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Status
+      <select name="status_value">
+        {% for s in statuses %}<option value="{{ s }}">{{ s }}</option>{% endfor %}
+      </select>
+    </label>
+    <button class="primary" type="submit">Create</button>
+  </form>
+  <p class="muted small">
+    The member's card is linked at the kiosk on their first tap, which is also when their
+    photo is taken. Until then they can check in by typing their PUID.
+  </p>
+</details>
+
+<table class="grid">
+  <thead>
+    <tr><th></th><th>Name</th><th>PUID</th><th>NetID</th><th>Year</th><th>Plan</th><th>Status</th><th>Card</th></tr>
+  </thead>
+  <tbody>
+    {% for m in members %}
+    <tr>
+      <td>
+        {% if m.photo_path %}
+          <img class="avatar" src="/photos/{{ m.photo_path }}" alt="">
+        {% else %}
+          <span class="avatar avatar-empty">{{ m.first_name[0] }}{{ m.last_name[0] }}</span>
+        {% endif %}
+      </td>
+      <td><a href="/admin/members/{{ m.id }}">{{ m.full_name }}</a></td>
+      <td class="num">{{ m.puid }}</td>
+      {# Members enrolled before NetIDs were collected have none, and the dash
+         is the point: it is the list of who still needs one. #}
+      <td>{{ m.netid or '—' }}</td>
+      <td class="num">{{ m.class_year or '—' }}</td>
+      <td>{{ m.plan_type | planlabel }}</td>
+      <td>
+        {% if m.status == 'active' %}<span class="chip ok">active</span>
+        {% else %}<span class="chip stop">{{ m.status }}</span>{% endif %}
+      </td>
+      <td>
+        {% if m.id in enrolled %}<span class="chip ok">linked</span>
+        {% else %}<span class="chip warn">none</span>{% endif %}
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="8" class="muted">No members match.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}

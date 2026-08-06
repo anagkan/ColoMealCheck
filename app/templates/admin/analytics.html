@@ -1,0 +1,205 @@
+{% extends "admin/base.html" %}
+{% block title %}Analytics{% endblock %}
+
+{# One macro for every sortable column, so a new column cannot quietly ship
+   without its sort link. #}
+{% macro sortable(key, label, numeric=False) %}
+  <th {% if numeric %}class="num"{% endif %}>
+    <a class="sort {% if sort == key %}on{% endif %}" href="{{ sort_link(key) }}">
+      {{ label }}<span class="arrow">{% if sort == key %}{{ '▾' if dir == 'desc' else '▴' }}{% endif %}</span>
+    </a>
+  </th>
+{% endmacro %}
+
+{% macro breakdown(title, groups, key_label) %}
+  {% set most = groups | map(attribute='meals') | max | default(0) %}
+  <section class="card">
+    <h2>{{ title }}</h2>
+    <table class="grid tight">
+      <thead>
+        <tr>
+          <th>{{ key_label }}</th><th class="num">Members</th>
+          <th class="num">Meals</th><th class="bar-col">Per member</th>
+          <th class="num">Ate</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in groups %}
+        <tr>
+          <td>{{ g.label if key_label != 'Plan' else g.label | planlabel }}</td>
+          <td class="num">{{ g.members }}</td>
+          <td class="num">{{ g.meals }}</td>
+          <td class="bar-col">
+            <span class="bar-wrap">
+              <span class="bar" style="width: {{ (100 * g.meals / most) | round | int if most else 0 }}%"></span>
+            </span>
+            <span class="bar-value">{{ g.meals_per_member }}</span>
+          </td>
+          <td class="num">{{ g.participation }}%</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="muted">Nothing to show.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endmacro %}
+
+{% block content %}
+
+<header class="page-head">
+  <div>
+    <h1>Analytics</h1>
+    <p class="muted">
+      {{ start | prettydate }} – {{ end | prettydate }} · {{ rows | length }} members shown
+    </p>
+  </div>
+  <a class="btn" href="/admin/analytics.csv{% if csv_query %}?{{ csv_query }}{% endif %}">CSV</a>
+</header>
+
+<form class="card filters" method="get" action="/admin/analytics">
+  <label class="tiny">From <input type="date" name="start" value="{{ start }}"></label>
+  <label class="tiny">To <input type="date" name="end" value="{{ end }}"></label>
+  <label class="tiny">Name or PUID <input name="q" value="{{ q }}" placeholder="Search"></label>
+  <label class="tiny">Class year
+    <select name="class_year">
+      <option value="">Any</option>
+      {% for y in years %}
+        <option value="{{ y }}" {% if class_year == y | string %}selected{% endif %}>{{ y }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="tiny">Plan
+    <select name="plan">
+      <option value="">Any</option>
+      {% for p in plans %}
+        <option value="{{ p }}" {% if p == plan %}selected{% endif %}>{{ p | planlabel }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label class="tiny">Status
+    <select name="status_filter">
+      <option value="">Any</option>
+      {% for s in statuses %}
+        <option value="{{ s }}" {% if s == status_filter %}selected{% endif %}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {# Carried through the filter form so changing a filter does not silently
+     reset the column the reader is sorting by. #}
+  <input type="hidden" name="sort" value="{{ sort }}">
+  <input type="hidden" name="dir" value="{{ dir }}">
+  <button class="primary" type="submit">Apply</button>
+  <a class="btn" href="/admin/analytics">Reset</a>
+</form>
+
+<section class="tiles">
+  <div class="tile">
+    <span class="tile-label">Members</span>
+    <span class="tile-value">{{ totals.members }}</span>
+    <span class="tile-sub">{{ totals.active }} active</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Meals</span>
+    <span class="tile-value">{{ totals.meals }}</span>
+    <span class="tile-sub">in this window</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Guest meals</span>
+    <span class="tile-value">{{ totals.guest_meals }}</span>
+    <span class="tile-sub">hosted by members</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Overages</span>
+    <span class="tile-value {% if totals.overages %}over{% endif %}">{{ totals.overages }}</span>
+    <span class="tile-sub">meals past plan</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">No card</span>
+    <span class="tile-value">{{ totals.no_card }}</span>
+    <span class="tile-sub">still typing their PUID</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Dormant</span>
+    <span class="tile-value">{{ totals.dormant }}</span>
+    <span class="tile-sub">active, never ate</span>
+  </div>
+</section>
+
+{{ breakdown('By class year', breakdowns.class_years, 'Class') }}
+
+<div class="cols">
+  {{ breakdown('By meal plan', breakdowns.plans, 'Plan') }}
+  {{ breakdown('By status', breakdowns.statuses, 'Status') }}
+</div>
+<p class="muted small breakdown-note">
+  Breakdowns describe the whole club. The filters above apply to the member table below.
+</p>
+
+<section class="card">
+  <div class="card-head">
+    <h2>Members</h2>
+    <p class="muted small">Click any column heading to sort by it.</p>
+  </div>
+  <table class="grid tight">
+    <thead>
+      <tr>
+        {{ sortable('name', 'Member') }}
+        {{ sortable('class_year', 'Year', numeric=True) }}
+        {{ sortable('plan', 'Plan') }}
+        {{ sortable('status', 'Status') }}
+        {{ sortable('card', 'Card') }}
+        {{ sortable('meals', 'Meals', numeric=True) }}
+        {{ sortable('per_week', 'Per week', numeric=True) }}
+        {{ sortable('utilization', 'Plan used', numeric=True) }}
+        {{ sortable('days', 'Days', numeric=True) }}
+        {{ sortable('guests', 'Guests', numeric=True) }}
+        {{ sortable('overages', 'Over', numeric=True) }}
+        {{ sortable('last_seen', 'Last seen', numeric=True) }}
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td><a href="/admin/members/{{ r.member.id }}">{{ r.member.full_name }}</a></td>
+        <td class="num">{{ r.member.class_year or '—' }}</td>
+        <td class="muted">{{ r.member.plan_type | planlabel }}</td>
+        <td>
+          {% if r.member.status == 'active' %}<span class="chip ok">active</span>
+          {% else %}<span class="chip stop">{{ r.member.status }}</span>{% endif %}
+        </td>
+        <td>
+          {% if r.has_card %}<span class="chip ok">linked</span>
+          {% else %}<span class="chip warn">none</span>{% endif %}
+        </td>
+        <td class="num">{{ r.meals }}</td>
+        <td class="num">{{ r.meals_per_week }}</td>
+        <td class="num">
+          {% if r.utilization is none %}—
+          {% else %}
+            <span class="bar-wrap inline-bar">
+              <span class="bar {% if r.utilization > 100 %}bar-over{% endif %}"
+                    style="width: {{ [r.utilization, 100] | min }}%"></span>
+            </span>
+            {{ r.utilization }}%
+          {% endif %}
+        </td>
+        <td class="num">{{ r.days_attended }}</td>
+        <td class="num">{{ r.guest_meals or '' }}</td>
+        <td class="num">
+          {% if r.overages %}<span class="chip warn">+{{ r.overages }}</span>{% endif %}
+        </td>
+        <td class="num muted">
+          {% if r.last_seen %}{{ r.last_seen }}
+          {% elif r.is_dormant %}<span class="chip warn">never</span>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="12" class="muted">No members match these filters.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% endblock %}

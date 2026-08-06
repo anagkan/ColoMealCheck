@@ -1,0 +1,28 @@
+{% extends "admin/base.html" %}
+{% block title %}Audit{% endblock %}
+{% block content %}
+
+<header class="page-head">
+  <div>
+    <h1>Audit log</h1>
+    <p class="muted">Every discretionary action, with a name attached.</p>
+  </div>
+</header>
+
+<table class="grid">
+  <thead><tr><th>When</th><th>Who</th><th>Action</th><th>Detail</th></tr></thead>
+  <tbody>
+    {% for e in entries %}
+    <tr>
+      <td class="num">{{ e.at | prettydate }} {{ e.at | localtime }}</td>
+      <td>{{ e.actor }}</td>
+      <td><span class="chip info">{{ e.action }}</span></td>
+      <td class="muted small">{{ e.detail or '' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="4" class="muted">Nothing logged yet.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}

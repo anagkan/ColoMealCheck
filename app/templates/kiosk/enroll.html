@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Enroll a member — Colonial Club</title>
+  <link rel="stylesheet" href="/static/kiosk.css">
+</head>
+<body class="kiosk">
+
+  <header class="bar">
+    <div class="bar-left">
+      <span class="club">Colonial Club</span>
+      <span class="service">Staff — enroll a member and link their TigerCard</span>
+    </div>
+    <div class="bar-right">
+      <a class="bar-link" href="/">← Back to check-in</a>
+    </div>
+  </header>
+
+  <main id="stage" class="stage-top">
+    <div class="enroll-flow">
+
+      <section class="panel step">
+        <h2><span class="step-num">1</span> Staff PIN</h2>
+        <input id="staffPin" class="text-input" type="password" inputmode="numeric"
+               placeholder="Staff PIN" autocomplete="off" autofocus>
+      </section>
+
+      <section class="panel step">
+        <h2><span class="step-num">2</span> The card</h2>
+        <p class="sub">
+          Tap the card on the reader, or type its number — 16 hexadecimal digits (0–9, A–F).
+        </p>
+        <input id="cardValue" class="text-input" placeholder="Tap the card now…"
+               pattern="[0-9A-Fa-f]{16}" autocomplete="off"
+               aria-describedby="cardError" value="{{ prefill_value or '' }}">
+        <p id="cardError" class="field-error" role="alert" aria-live="polite" hidden></p>
+      </section>
+
+      <section class="panel step">
+        <h2><span class="step-num">3</span> The member</h2>
+
+        <div class="mode-switch" role="tablist" aria-label="Member type">
+          <button id="modeNewBtn" class="mode-btn is-on" role="tab"
+                  aria-selected="true" aria-controls="newMemberFields">New member</button>
+          <button id="modeExistingBtn" class="mode-btn" role="tab"
+                  aria-selected="false" aria-controls="existingFields">Already in the system</button>
+        </div>
+
+        <div id="newMemberFields" role="tabpanel" aria-labelledby="modeNewBtn">
+          <p class="sub small">
+            Their details and their card are saved together, so they can eat as soon as
+            you finish this form.
+          </p>
+          <div class="field-grid">
+            <label class="field">
+              <span class="field-label">First name</span>
+              <input id="firstName" class="text-input" autocomplete="off">
+            </label>
+            <label class="field">
+              <span class="field-label">Last name</span>
+              <input id="lastName" class="text-input" autocomplete="off">
+            </label>
+            <label class="field">
+              <span class="field-label">PUID</span>
+              <input id="puid" class="text-input" inputmode="numeric" pattern="[0-9]{9}"
+                     placeholder="905559999" autocomplete="off" aria-describedby="puidError">
+              <p id="puidError" class="field-error" role="alert" aria-live="polite" hidden></p>
+            </label>
+            <!-- The second identifier. A PUID is what is printed on the card;
+                 a NetID is what every other Princeton system knows them by, and
+                 collecting it here is the only moment the member is standing
+                 there to be asked. Required — unlike a guest's, which may
+                 genuinely not exist. -->
+            <label class="field">
+              <span class="field-label">NetID</span>
+              <input id="netid" class="text-input" autocapitalize="off"
+                     autocorrect="off" spellcheck="false" pattern="[A-Za-z][A-Za-z0-9]{1,7}"
+                     placeholder="ak9981" maxlength="8" autocomplete="off"
+                     aria-describedby="netidError">
+              <p id="netidError" class="field-error" role="alert" aria-live="polite" hidden></p>
+            </label>
+            <label class="field">
+              <span class="field-label">Class year</span>
+              <input id="classYear" class="text-input" inputmode="numeric"
+                     pattern="[0-9]{4}" placeholder="2028" autocomplete="off"
+                     aria-describedby="classYearError">
+              <p id="classYearError" class="field-error" role="alert" aria-live="polite" hidden></p>
+            </label>
+            <label class="field">
+              <span class="field-label">Meal plan</span>
+              <select id="planType" class="text-input">
+                <option value="plan_19">19 meals</option>
+                <option value="plan_14">14 meals</option>
+                <option value="rca_paa">RCA/PAA (9 meals)</option>
+                <option value="none">No plan</option>
+              </select>
+            </label>
+          </div>
+        </div>
+
+        <div id="existingFields" role="tabpanel" aria-labelledby="modeExistingBtn" hidden>
+          <p class="sub small">
+            For a replacement TigerCard. The member's old card is retired automatically.
+          </p>
+          <input id="memberSearch" class="text-input" placeholder="Search by name or PUID"
+                 autocomplete="off">
+          <ul id="searchResults" class="search-results"></ul>
+          <p id="chosen" class="chosen" hidden>
+            Linking to <strong id="chosenName"></strong>
+            <button id="clearChoice" class="link-btn">change</button>
+          </p>
+        </div>
+      </section>
+
+      <section class="panel step" id="photoStep">
+        <h2><span class="step-num">4</span> Photo <span class="optional">optional</span></h2>
+        <div class="capture">
+          <video id="camera" autoplay playsinline muted hidden></video>
+          <img id="preview" class="preview" hidden alt="Captured photo preview">
+          <canvas id="snapshot" hidden></canvas>
+          <p id="cameraError" class="warn" hidden></p>
+          <input id="photoUpload" type="file" accept="image/*" hidden>
+          <div class="panel-actions">
+            <button id="startCamBtn" class="action-btn subtle">Start camera</button>
+            <button id="captureBtn" class="action-btn" hidden>Take photo</button>
+            <button id="retakeBtn" class="action-btn subtle" hidden>Retake</button>
+            <button id="uploadBtn" class="action-btn subtle">Upload a file</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel step">
+        <div class="panel-actions">
+          <button id="submitBtn" class="action-btn big-btn">Enroll member</button>
+          <a class="action-btn subtle" href="/">Cancel</a>
+        </div>
+        <p id="status" class="status" hidden></p>
+      </section>
+
+    </div>
+  </main>
+
+  <script src="/static/enroll.js"></script>
+</body>
+</html>

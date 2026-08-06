@@ -1,0 +1,94 @@
+{% extends "admin/base.html" %}
+{% block title %}Today{% endblock %}
+{% block content %}
+
+<header class="page-head">
+  <div>
+    <h1>{{ day | prettydate }}</h1>
+    <p class="muted">Live attendance</p>
+  </div>
+  <form class="inline" method="get" action="/admin">
+    <input type="date" name="day" value="{{ day }}">
+    <button type="submit">Go</button>
+    <a class="btn" href="/admin/reports/daily.csv?week={{ day }}">Export CSV</a>
+  </form>
+</header>
+
+{% if gaps %}
+<p class="notice">
+  {{ gaps }} active member{{ '' if gaps == 1 else 's' }} still {{ 'has' if gaps == 1 else 'have' }}
+  no card enrolled — <a href="/admin/reports">see the list</a>. They can still check in by
+  typing their PUID.
+</p>
+{% endif %}
+
+<section class="tiles">
+  {% for name, members, guests, alumni in counts %}
+    <div class="tile">
+      <span class="tile-label">{{ name }}</span>
+      <span class="tile-value">{{ members }}</span>
+      <span class="tile-sub">
+        {{ guests }} guest{{ '' if guests == 1 else 's' }}
+        {%- if alumni %} · {{ alumni }} alumni{% endif %}
+      </span>
+    </div>
+  {% else %}
+    <p class="muted">No meals recorded yet today.</p>
+  {% endfor %}
+</section>
+
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Time</th><th>Who</th><th>Meal</th><th>Entry</th><th>Flags</th><th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td class="num">{{ row.scanned_at | localtime }}</td>
+      <td>
+        {% if row.kind == 'guest' %}
+          <span class="chip">Guest</span> {{ row.guest_name }}
+          {% if row.guest_netid %}<span class="muted">{{ row.guest_netid }}</span>
+          {% elif row.guest_netid_reason %}
+            <span class="chip">no NetID</span>
+            <span class="muted">{{ row.guest_netid_reason }}</span>
+          {% endif %}
+          <span class="muted">— hosted by {{ row.member.full_name }}</span>
+        {% elif row.kind == 'alumni' %}
+          {# No member to link to: the row's own columns are the only record of
+             who this was, so the contact detail is printed here rather than
+             hidden behind a member page that does not exist. #}
+          <span class="chip">Alumni</span> {{ row.alumni_name }}
+          {% if row.alumni_class_year %}
+            <span class="muted">Class of {{ row.alumni_class_year }}</span>
+          {% endif %}
+          {% if row.alumni_netid %}<span class="muted">{{ row.alumni_netid }}</span>{% endif %}
+          {% if row.alumni_email %}<span class="muted">{{ row.alumni_email }}</span>{% endif %}
+          {% if row.alumni_phone %}<span class="muted">{{ row.alumni_phone }}</span>{% endif %}
+        {% else %}
+          <a href="/admin/members/{{ row.member_id }}">{{ row.member.full_name }}</a>
+          <span class="muted">{{ row.member.puid }}</span>
+        {% endif %}
+      </td>
+      <td>{{ row.meal_period.name if row.meal_period else '—' }}</td>
+      <td class="muted">{{ row.entry_method | entrylabel }}</td>
+      <td>
+        {% if row.is_overage %}<span class="chip warn">Overage</span>{% endif %}
+        {% if row.status_warning %}<span class="chip stop">{{ row.status_warning }}</span>{% endif %}
+        {% if row.override_by %}<span class="chip info">Override</span>{% endif %}
+      </td>
+      <td>
+        <form method="post" action="/admin/attendance/{{ row.id }}/void">
+          <button class="link-btn">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="muted">Nothing recorded for this day.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}

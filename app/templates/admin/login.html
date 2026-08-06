@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in — ColoMealCheck</title>
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body class="centered">
+  <form class="card login" method="post" action="/login">
+    <h1>Colonial<span>MealCheck</span></h1>
+    <p class="muted">Staff sign-in</p>
+    {% if error %}<p class="alert">{{ error }}</p>{% endif %}
+    <label>Username <input name="username" autocomplete="username" autofocus required></label>
+    <label>Password
+      <input name="password" type="password" autocomplete="current-password" required></label>
+    <button class="primary" type="submit">Sign in</button>
+  </form>
+</body>
+</html>

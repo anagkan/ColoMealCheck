@@ -1,0 +1,38 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-colonial}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-colonial}
+      POSTGRES_DB: ${POSTGRES_DB:-colomealcheck}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-colonial} -d ${POSTGRES_DB:-colomealcheck}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-colonial}:${POSTGRES_PASSWORD:-colonial}@db:5432/${POSTGRES_DB:-colomealcheck}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      TIMEZONE: ${TIMEZONE:-America/New_York}
+      PHOTO_DIR: /srv/data/photos
+      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
+      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      STAFF_PIN: ${STAFF_PIN:-1234}
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - photos:/srv/data/photos
+
+volumes:
+  pgdata:
+  photos:

@@ -1,0 +1,144 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ member.full_name }}{% endblock %}
+{% block content %}
+
+<header class="page-head">
+  <div class="who-head">
+    {% if member.photo_path %}
+      <img class="avatar-lg" src="/photos/{{ member.photo_path }}" alt="">
+    {% else %}
+      <span class="avatar-lg avatar-empty">{{ member.first_name[0] }}{{ member.last_name[0] }}</span>
+    {% endif %}
+    <div>
+      <h1>{{ member.full_name }}</h1>
+      <p class="muted">
+        {{ member.puid }}{% if member.netid %} · {{ member.netid }}{% endif %}
+        {%- if member.class_year %} · Class of {{ member.class_year }}{% endif %}
+        · {{ member.plan_type | planlabel }} · {{ member.status }}
+      </p>
+    </div>
+  </div>
+  <a class="btn" href="/admin/members">← All members</a>
+</header>
+
+<section class="tiles">
+  <div class="tile">
+    <span class="tile-label">This week</span>
+    <span class="tile-value {% if weekly.is_over %}over{% endif %}">
+      {{ weekly.used }}{% if weekly.allotment %} / {{ weekly.allotment }}{% endif %}
+    </span>
+    <span class="tile-sub">{{ week_start | prettydate }} – {{ week_end | prettydate }}</span>
+  </div>
+  <div class="tile">
+    <span class="tile-label">Guest meals</span>
+    <span class="tile-value {% if guests.exhausted %}over{% endif %}">
+      {{ guests.used }} / {{ guests.quota }}
+    </span>
+    <span class="tile-sub">{{ month_start.strftime('%B %Y') }}</span>
+  </div>
+</section>
+
+<div class="cols">
+  <section class="card">
+    <h2>Details</h2>
+    <form method="post" action="/admin/members/{{ member.id }}" class="form-grid">
+      <label>First name <input name="first_name" value="{{ member.first_name }}" required></label>
+      <label>Last name <input name="last_name" value="{{ member.last_name }}" required></label>
+      <label>PUID <input name="puid" value="{{ member.puid }}" required></label>
+      <label>NetID <input name="netid" value="{{ member.netid or '' }}" placeholder="ak9981"
+                          maxlength="8" autocapitalize="off" autocorrect="off"
+                          spellcheck="false"></label>
+      <label>Class year <input name="class_year" value="{{ member.class_year or '' }}"></label>
+      <label>Meal plan
+        <select name="plan_type">
+          {% for p in plans %}
+            <option value="{{ p }}" {% if p == member.plan_type %}selected{% endif %}>
+              {{ p | planlabel }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Status
+        <select name="status_value">
+          {% for s in statuses %}
+            <option value="{{ s }}" {% if s == member.status %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="full">Notes <textarea name="notes" rows="2">{{ member.notes or '' }}</textarea></label>
+      <button class="primary" type="submit">Save</button>
+    </form>
+
+    <form method="post" action="/admin/members/{{ member.id }}/photo"
+          enctype="multipart/form-data" class="inline spaced">
+      <input type="file" name="photo" accept="image/*" required>
+      <button type="submit">Replace photo</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Cards</h2>
+    <table class="grid tight">
+      <thead><tr><th>Value</th><th>Type</th><th>Enrolled</th><th>State</th><th></th></tr></thead>
+      <tbody>
+        {% for c in credentials %}
+        <tr>
+          <td class="num">{{ c.value }}</td>
+          <td>{{ c.type }}</td>
+          <td class="muted">{{ c.enrolled_at | prettydate }}</td>
+          <td>
+            {% if c.is_active %}<span class="chip ok">active</span>
+            {% else %}<span class="chip">revoked</span>{% endif %}
+          </td>
+          <td>
+            {% if c.is_active %}
+            <form method="post" action="/admin/credentials/{{ c.id }}/revoke">
+              <button class="link-btn">Revoke</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="muted">
+          No card linked yet — this member checks in by typing their PUID.
+        </td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+</div>
+
+<section class="card">
+  <h2>Recent meals</h2>
+  <table class="grid tight">
+    <thead><tr><th>Date</th><th>Meal</th><th>Kind</th><th>Entry</th><th>Flags</th></tr></thead>
+    <tbody>
+      {% for row in recent %}
+      <tr class="{% if row.voided_at %}voided{% endif %}">
+        <td class="num">{{ row.service_date }}</td>
+        <td>{{ row.meal_period.name if row.meal_period else '—' }}</td>
+        <td>
+          {%- if row.kind == 'guest' -%}
+            Guest: {{ row.guest_name }}
+            {%- if row.guest_netid %} <span class="muted">({{ row.guest_netid }})</span>
+            {%- elif row.guest_netid_reason %}
+              <span class="muted">(no NetID — {{ row.guest_netid_reason }})</span>
+            {%- endif -%}
+          {%- else -%}
+            Member
+          {%- endif -%}
+        </td>
+        <td class="muted">{{ row.entry_method | entrylabel }}</td>
+        <td>
+          {% if row.is_overage %}<span class="chip warn">Overage</span>{% endif %}
+          {% if row.voided_at %}<span class="chip">Removed</span>{% endif %}
+          {% if row.override_by %}<span class="chip info">Override</span>{% endif %}
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="5" class="muted">No meals recorded.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+{% endblock %}

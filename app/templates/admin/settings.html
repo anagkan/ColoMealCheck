@@ -1,0 +1,33 @@
+{% extends "admin/base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+
+<header class="page-head">
+  <div>
+    <h1>Settings</h1>
+    <p class="muted">Club rules. Changes take effect on the next scan.</p>
+  </div>
+</header>
+
+<form method="post" action="/admin/settings" class="card">
+  <table class="grid">
+    <thead><tr><th>Setting</th><th>Value</th><th>What it does</th></tr></thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td class="num">{{ row.key }}</td>
+        <td><input name="{{ row.key }}" value="{{ row.value }}" size="8"></td>
+        <td class="muted">{{ row.description }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <button class="primary" type="submit">Save settings</button>
+</form>
+
+<p class="muted small">
+  <code>week_start_day</code> uses 0 = Monday through 6 = Sunday. Colonial's meal week starts
+  Monday, so a Sunday dinner is the last meal of its week.
+</p>
+
+{% endblock %}

@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Colonial Club — Meal Check-In</title>
+  <link rel="stylesheet" href="/static/kiosk.css">
+</head>
+<body class="kiosk">
+
+  <!-- The reader is a keyboard. It types the card value and presses Enter into
+       this input, which a watchdog keeps focused on the idle and result
+       screens only. Off-screen rather than display:none, because a hidden
+       input cannot hold focus. -->
+  <input id="cardInput" class="card-sink" autocomplete="off" autocapitalize="off"
+         autocorrect="off" spellcheck="false" aria-hidden="true" tabindex="-1">
+
+  <header class="bar">
+    <div class="bar-left">
+      <span class="club">Colonial Club</span>
+      <span id="serviceLabel" class="service">
+        {% if period %}Serving {{ period.name }} until {{ period.end_time.strftime('%-I:%M %p') }}
+        {% else %}Not currently serving{% endif %}
+      </span>
+    </div>
+    <div class="bar-right">
+      <span id="offlineBadge" class="offline" hidden></span>
+      <span id="clock" class="clock"></span>
+      <a class="bar-link" href="/enroll">Enroll</a>
+      <a class="bar-link" href="/admin">Admin</a>
+    </div>
+  </header>
+
+  <!-- Rendered server-side so the first paint is already correct; kiosk.js then
+       ticks the countdown down and re-syncs it against the server each minute. -->
+  <div id="mealBanner" class="meal-banner" data-serving="{{ 'true' if period else 'false' }}">
+    <span id="mealBannerName" class="meal-banner-name">
+      {% if period %}Now serving {{ period.name }}
+      {% elif next_period %}Next Meal: {{ next_period.name }}
+      {% else %}Outside Meal Hours{% endif %}
+    </span>
+    <span id="mealBannerCountdown" class="meal-banner-countdown"
+          {% if not period and not next_period %}hidden{% endif %}></span>
+  </div>
+
+  <main id="stage">
+
+    <section id="idle" class="screen idle">
+      <div class="tap-target">
+        <svg viewBox="0 0 24 24" class="tap-icon" aria-hidden="true">
+          <path d="M12 2a1 1 0 0 1 1 1v9.6l2.5-1.4a2 2 0 0 1 2.7 2.8l-4 6A4 4 0 0 1 11 22H9a5 5 0 0 1-5-5v-5a1 1 0 0 1 2 0v3l1-1V3a1 1 0 0 1 2 0v7h1V3a1 1 0 0 1 1-1z"/>
+        </svg>
+        <h1>Tap your TigerCard</h1>
+        <p class="sub">Hold your card flat against the reader</p>
+      </div>
+
+      <!-- The fallback for a card that will not read sits on the idle screen
+           itself rather than behind a button: a member whose card has failed is
+           already stuck, and one more tap to find the box is one too many. -->
+      <div id="manual" class="panel narrow">
+        <h2>Enter your Princeton ID</h2>
+        <p class="sub">Type the 9-digit number printed on your TigerCard.</p>
+        <!-- A PUID is exactly nine decimal digits. maxlength and pattern stop most
+             of what a member can type; kiosk.js enforces the same rule on every
+             keystroke and again on submit, because neither attribute holds against
+             a paste and neither one runs outside a <form>. -->
+        <input id="manualInput" class="text-input big" inputmode="numeric"
+               autocomplete="off" placeholder="905551234" maxlength="9"
+               pattern="[0-9]{9}" aria-describedby="manualError">
+        <p id="manualError" class="warn" hidden></p>
+        <div class="panel-actions">
+          <button id="manualSubmit" class="action-btn">Check in</button>
+          <button class="action-btn subtle" data-action="cancel">Clear</button>
+        </div>
+      </div>
+    </section>
+
+    <section id="result" class="screen result" hidden>
+      <div class="result-card">
+        <img id="resultPhoto" class="photo" alt="" hidden>
+        <div id="photoFallback" class="photo photo-empty" hidden><span></span></div>
+        <div class="result-text">
+          <!-- Name and class year on one line: the year is what tells two
+               members with the same name apart, so it has to be read in the
+               same glance as the name, not on the line below. -->
+          <h2 class="result-name">
+            <span id="resultName"></span><span id="resultClassYear" class="class-year"></span>
+          </h2>
+          <p id="resultMeta" class="meta"></p>
+          <p id="resultWarnings" class="warn-list"></p>
+        </div>
+      </div>
+      <div id="resultBand" class="band">
+        <span id="resultMessage"></span>
+      </div>
+      <div class="result-actions">
+        <a id="enrollLink" class="action-btn" href="/enroll" hidden>Staff: link this card</a>
+        <button id="guestBtn" class="action-btn">+ Guest</button>
+        <button id="undoBtn" class="action-btn subtle">Undo</button>
+        <button id="doneBtn" class="action-btn subtle">Done</button>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="kiosk-foot">
+    <button id="guestMealBtn" class="ghost-btn">Guest Meal</button>
+    <!-- Alumni meals sit beside guest meals rather than inside them: an alum
+         eating here is hosted by nobody, so there is no member to attach them
+         to and nothing to ask a host for. -->
+    <button id="alumniMealBtn" class="ghost-btn">Alumni Meal</button>
+  </footer>
+
+  <!-- Guest meals are a popup rather than a screen of their own. They interrupt
+       whatever the kiosk was showing — usually the "already checked in" result
+       from a member's second tap — and hand it straight back on cancel, so
+       signing a guest in never costs anyone their place in the flow. -->
+  <div id="guestModal" class="modal-backdrop" hidden>
+    <div class="modal panel" role="dialog" aria-modal="true"
+         aria-labelledby="guestModalTitle">
+      <h2 id="guestModalTitle">Guest Meal</h2>
+
+      <div class="field">
+        <span class="field-label">Member hosting the guest</span>
+        <!-- Filled in already when the popup was opened by a card tap; searched
+             for when it was opened from the button at the bottom of the page. -->
+        <p id="guestHostChosen" class="chosen" hidden>
+          <span id="guestHostName"></span>
+          <span id="guestHostPuid" class="tag"></span>
+          <button type="button" id="guestHostClear" class="link-btn">Change</button>
+        </p>
+        <input id="guestHostQuery" class="text-input" autocomplete="off"
+               placeholder="Member name or PUID">
+        <ul id="guestHostResults" class="search-results"></ul>
+      </div>
+
+      <p id="guestQuota" class="sub small"></p>
+
+      <div class="field-grid">
+        <div class="field">
+          <label class="field-label" for="guestFirstName">Guest first name</label>
+          <input id="guestFirstName" class="text-input" autocomplete="off">
+        </div>
+        <div class="field">
+          <label class="field-label" for="guestLastName">Guest last name</label>
+          <input id="guestLastName" class="text-input" autocomplete="off">
+        </div>
+        <div class="field">
+          <label class="field-label" for="guestNetid">Guest NetID</label>
+          <input id="guestNetid" class="text-input" autocomplete="off"
+                 autocapitalize="off" autocorrect="off" spellcheck="false"
+                 placeholder="ak9981" maxlength="32">
+        </div>
+      </div>
+
+      <!-- Visiting parents, alumni and siblings have no NetID. The field cannot
+           just be left blank, though: a blank is indistinguishable from a rush,
+           and the guest becomes untraceable. Saying so costs one tick and one
+           sentence, and the sentence is what goes on the record. -->
+      <label class="check">
+        <input type="checkbox" id="guestNoNetid">
+        <span>Guest has no NetID</span>
+      </label>
+
+      <div id="guestNoNetidBox" class="field">
+        <label class="field-label" for="guestNetidReason">
+          Why this guest has no NetID
+        </label>
+        <!-- Visible but disabled until the box above is ticked, so the popup's
+             shape never changes under someone mid-type, and the two fields read
+             as the alternatives they are: exactly one is live at a time. -->
+        <input id="guestNetidReason" class="text-input" autocomplete="off"
+               placeholder="e.g. visiting parent" maxlength="255" disabled>
+      </div>
+
+      <div id="guestOverride" class="override-box" hidden>
+        <p class="warn">Guest meal quota used up for this month.</p>
+        <input id="guestPin" class="text-input" type="password" inputmode="numeric"
+               placeholder="Staff PIN">
+        <input id="guestReason" class="text-input" placeholder="Reason for override">
+      </div>
+
+      <p id="guestError" class="field-error" hidden></p>
+
+      <div class="panel-actions">
+        <button id="guestSubmit" class="action-btn">Record guest meal</button>
+        <button class="action-btn subtle" data-action="cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Alumni meals are recorded against no member at all, so this popup asks
+       for nothing but the alum. Name and class year say who they are; an email
+       address or a phone number is what lets the club reach them afterwards,
+       and there is no card or PUID to recover it from later — which is why one
+       of the two is required and either one will do. -->
+  <div id="alumniModal" class="modal-backdrop" hidden>
+    <div class="modal panel" role="dialog" aria-modal="true"
+         aria-labelledby="alumniModalTitle">
+      <h2 id="alumniModalTitle">Alumni Meal</h2>
+      <p class="sub small">Not tied to a member — the alum eats on their own account.</p>
+
+      <div class="field-grid">
+        <div class="field">
+          <label class="field-label" for="alumniFirstName">First name</label>
+          <input id="alumniFirstName" class="text-input" autocomplete="off" maxlength="80">
+        </div>
+        <div class="field">
+          <label class="field-label" for="alumniLastName">Last name</label>
+          <input id="alumniLastName" class="text-input" autocomplete="off" maxlength="80">
+        </div>
+        <div class="field">
+          <label class="field-label" for="alumniClassYear">Class year</label>
+          <input id="alumniClassYear" class="text-input" inputmode="numeric"
+                 autocomplete="off" placeholder="2014" maxlength="4"
+                 pattern="[0-9]{4}">
+        </div>
+      </div>
+
+      <p class="sub small">Either an email address or a phone number — one is enough.</p>
+
+      <div class="field-grid">
+        <div class="field">
+          <label class="field-label" for="alumniEmail">Email</label>
+          <input id="alumniEmail" class="text-input" type="email" autocomplete="off"
+                 autocapitalize="off" autocorrect="off" spellcheck="false"
+                 placeholder="name@example.com" maxlength="255">
+        </div>
+        <div class="field">
+          <label class="field-label" for="alumniPhone">Phone</label>
+          <input id="alumniPhone" class="text-input" type="tel" inputmode="tel"
+                 autocomplete="off" placeholder="609-555-1234" maxlength="32">
+        </div>
+        <!-- Optional, and no substitute for the two above: many alumni keep a
+             NetID for life and it is the cleanest link back to the member they
+             used to be, but plenty have let theirs lapse — and a NetID
+             identifies an alum without reaching them. -->
+        <div class="field">
+          <label class="field-label" for="alumniNetid">
+            NetID <span class="optional">optional</span>
+          </label>
+          <input id="alumniNetid" class="text-input" autocapitalize="off"
+                 autocorrect="off" spellcheck="false" autocomplete="off"
+                 placeholder="ak9981" maxlength="8">
+        </div>
+      </div>
+
+      <p id="alumniError" class="field-error" hidden></p>
+
+      <div class="panel-actions">
+        <button id="alumniSubmit" class="action-btn">Record alumni meal</button>
+        <button class="action-btn subtle" data-action="cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    window.KIOSK_CONFIG = {
+      resultSeconds: {{ result_seconds }},
+      undoSeconds: {{ undo_seconds }},
+      serving: {{ 'true' if period else 'false' }},
+      periodName: {{ (period.name if period else None) | tojson }},
+      secondsRemaining: {{ seconds_remaining if seconds_remaining is not none else 0 }},
+      nextPeriodName: {{ (next_period.name if next_period else None) | tojson }},
+      secondsUntilNext: {{ seconds_until_next if seconds_until_next is not none else 0 }}
+    };
+  </script>
+  <script src="/static/kiosk.js"></script>
+</body>
+</html>

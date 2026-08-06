@@ -1,0 +1,68 @@
+{% extends "admin/base.html" %}
+{% block title %}Schedule{% endblock %}
+{% block content %}
+
+<header class="page-head">
+  <div>
+    <h1>Service schedule</h1>
+    <p class="muted">Which windows count as a meal, and when.</p>
+  </div>
+</header>
+
+<p class="notice {% if capacity != config.plan_19_meals %}alert{% endif %}">
+  This schedule serves <strong>{{ capacity }}</strong> meals per week.
+  {% if capacity == config.plan_19_meals %}
+    That matches the {{ config.plan_19_meals }}-meal plan, as it should.
+  {% else %}
+    The {{ config.plan_19_meals }}-meal plan expects {{ config.plan_19_meals }} —
+    a window is probably missing or duplicated.
+  {% endif %}
+</p>
+
+<div class="week">
+  {% for day in range(7) %}
+  <section class="card day">
+    <h2>{{ weekday_names[day] }}</h2>
+    <ul class="periods">
+      {% for p in by_day[day] if p.is_active %}
+      <li>
+        <span class="pname">{{ p.name }}</span>
+        <span class="ptime">{{ p.start_time.strftime('%-I:%M') }}–{{ p.end_time.strftime('%-I:%M %p') }}</span>
+        {% if not p.counts_toward_allotment %}<span class="chip">free</span>{% endif %}
+        <form method="post" action="/admin/schedule/{{ p.id }}/delete">
+          <button class="link-btn">remove</button>
+        </form>
+      </li>
+      {% else %}
+      <li class="muted">No service</li>
+      {% endfor %}
+    </ul>
+  </section>
+  {% endfor %}
+</div>
+
+{% if user.is_admin %}
+<section class="card">
+  <h2>Add a window</h2>
+  <form method="post" action="/admin/schedule" class="form-grid">
+    <label>Name <input name="name" placeholder="Late Meal" required></label>
+    <label>Day
+      <select name="weekday">
+        {% for day in range(7) %}<option value="{{ day }}">{{ weekday_names[day] }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Opens <input name="start_time" type="time" required></label>
+    <label>Closes <input name="end_time" type="time" required></label>
+    <label class="check">
+      <input type="checkbox" name="counts" checked> Counts toward the weekly allotment
+    </label>
+    <button class="primary" type="submit">Add</button>
+  </form>
+  <p class="muted small">
+    A window that closes earlier than it opens (22:00 → 01:00) runs past midnight and is
+    booked against the day it opened on.
+  </p>
+</section>
+{% endif %}
+
+{% endblock %}
