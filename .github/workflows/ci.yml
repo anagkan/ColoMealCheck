@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A superseded pull request run is wasted work, but a superseded push to main is
+# a published image nobody asked to cancel — so only pull requests are cut off.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 3.12 because that is what the image runs. Testing on a version the
+      # container will never execute tells you about a Python nobody deploys.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: pip install -r requirements-dev.txt
+
+      # The jsdom harnesses in tests/ drive the real kiosk.js against the real
+      # rendered page. They are the only coverage of which of the kiosk's two
+      # keyboard consumers owns focus.
+      - run: npm ci
+
+      - run: pytest
+        env:
+          # Without this the DOM tests skip when node or jsdom is missing, and a
+          # skip is indistinguishable from a pass in the summary. Set here so a
+          # broken install fails the run instead of silently dropping the only
+          # tests that cover focus routing.
+          REQUIRE_DOM_TESTS: "1"
+
+  publish:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      # arm64 is emulated here; the runners are amd64. It is the slow half of
+      # this job, and it is not optional: an image built for one architecture
+      # fails on the other with `exec format error`, which names nothing useful.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # The workflow's own token, scoped by the `packages: write` permission
+          # above. No personal access token to store, rotate, or leak.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          # Spelled out rather than built from github.repository, which carries
+          # this repository's capital letters. GHCR rejects them.
+          images: ghcr.io/anagkan/colomealcheck
+          tags: |
+            type=raw,value=latest
+            type=sha,prefix=,format=short
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

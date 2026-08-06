@@ -132,11 +132,16 @@ permission list of its own, which is what the `org.opencontainers.image.source`
 label in the Dockerfile buys: it links the package to the repository, so adding
 someone here is all it takes.
 
-The tag in that file is pinned rather than `:latest`. Someone testing a build
-should keep getting that build when they restart, instead of being moved onto
-whatever was pushed while they were reading.
+That file tracks `:latest`, which CI rewrites on every merge to `main`. Anyone
+running it gets each change on their next `docker compose pull` — convenient
+while the app is being tried out, and a hazard once a meal service depends on
+it, because a restart can move the kiosk onto a build nobody chose.
 
-Publishing a new version:
+Pin it before that point. Every CI build also publishes an immutable
+`sha-<commit>` tag, so there is always a specific thing to pin to.
+
+CI publishes on its own; the rest of this section is for doing it by hand, which
+is worth knowing when the workflow is the thing that is broken.
 
 ```bash
 docker buildx build \
@@ -157,8 +162,8 @@ the default one silently cannot produce a multi-architecture manifest, and the
 docker buildx create --name colomeal --driver docker-container --bootstrap --use
 ```
 
-Then bump the pinned tag in `docker-compose.deploy.yml` to match, and check the
-result before handing it to anyone:
+Check the result before handing it to anyone — and if `docker-compose.deploy.yml`
+has been pinned to a version by then, bump it to match:
 
 ```bash
 docker buildx imagetools inspect ghcr.io/anagkan/colomealcheck:0.2.0
