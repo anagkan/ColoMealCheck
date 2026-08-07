@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Republishing without a code change: a registry image deleted by accident, a
+  # build that needs redoing against a new base image, or a first run after the
+  # workflow itself was merged too fast to trigger on its own commit.
+  workflow_dispatch:
 
 # A superseded pull request run is wasted work, but a superseded push to main is
 # a published image nobody asked to cancel — so only pull requests are cut off.
@@ -47,7 +51,10 @@ jobs:
 
   publish:
     needs: test
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # Everything on main that is not a pull request: merges, and hand-triggered
+    # runs. Gating on `push` alone would accept the merge but refuse the manual
+    # rerun, which is the case the button exists for.
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
       contents: read
