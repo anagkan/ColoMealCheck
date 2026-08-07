@@ -438,3 +438,15 @@ Two security notes on the current deployment: the app trusts the club LAN
 staff PIN is shared. Both are appropriate for a dining room and both are logged
 — every override and forced entry has an actor in `/admin/audit`. If the server
 is ever exposed beyond the club LAN, revisit both.
+
+---
+
+## License
+
+Licensed under the Apache License, Version 2.0. The full terms are in
+[`LICENSE`](LICENSE); the attribution notice is in [`NOTICE`](NOTICE).
+
+You may use, modify and redistribute this, including for another eating club.
+In return the license asks three things: pass along a copy of the license, mark
+any files you changed as changed, and carry the `NOTICE` file forward so the
+original authorship stays attached to the code.
