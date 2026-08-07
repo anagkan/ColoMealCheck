@@ -16,9 +16,9 @@
 # someone onto a build they did not ask for — which is the point while the app is
 # being tried out, and a hazard once it is being relied on.
 #
-# Pin this to a version tag before anyone depends on it. CI also publishes an
-# immutable sha-<commit> tag for every build, so there is always something
-# specific to pin to.
+# Pin this before anyone depends on it. Every CI build also publishes the short
+# commit SHA as a tag — bare, with no prefix, e.g. :ca55f6f — and that tag is
+# never rewritten, so there is always something specific to pin to.
 
 services:
   db:
