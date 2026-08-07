@@ -2,6 +2,7 @@
   "name": "colomealcheck-domtests",
   "version": "0.0.0",
   "private": true,
+  "license": "Apache-2.0",
   "description": "Dev-only dependencies for the jsdom harnesses in tests/. The app itself ships no JavaScript build step.",
   "devDependencies": {
     "jsdom": "^29.1.1"
