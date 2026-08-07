@@ -137,8 +137,10 @@ running it gets each change on their next `docker compose pull` — convenient
 while the app is being tried out, and a hazard once a meal service depends on
 it, because a restart can move the kiosk onto a build nobody chose.
 
-Pin it before that point. Every CI build also publishes an immutable
-`sha-<commit>` tag, so there is always a specific thing to pin to.
+Pin it before that point. Every CI build also publishes the short commit SHA as
+a tag — bare, with no prefix, so the build of `ca55f6f` is
+`ghcr.io/anagkan/colomealcheck:ca55f6f`. Those are never rewritten, so there is
+always a specific thing to pin to.
 
 CI publishes on its own; the rest of this section is for doing it by hand, which
 is worth knowing when the workflow is the thing that is broken.
