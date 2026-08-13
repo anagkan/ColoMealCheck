@@ -205,6 +205,13 @@ followed by a newline. Reader configuration problems surface here, not in the
 app. A distinctive prefix is worth setting so stray typing can never be mistaken
 for a scan.
 
+If nothing appears in the text editor, check what reader you actually have
+before debugging the app. A PC/SC-only reader — the OMNIKEY 5x21 family, and
+most CCID readers — presents no keyboard to the operating system and can never
+type, so the kiosk will never see a scan no matter how it is configured. See
+[`bridge/README.md`](bridge/README.md) for the fallback: a small local process
+that reads serials over PC/SC and feeds them to the kiosk page.
+
 ---
 
 ## How the rules work

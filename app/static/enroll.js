@@ -167,6 +167,47 @@
 
   if (!cardValue.value) cardValue.focus();
 
+  /* On a kiosk whose reader cannot type, the bridge fills this field instead
+   * of the reader typing into it. It only ever writes the card box — never
+   * submits — because enrollment is staff work that wants confirming, and a
+   * card tapped by mistake must be correctable rather than already bound.
+   * Validation runs the same way it would for typed input. */
+  (function bridgeFillsCard() {
+    const url = (window.ENROLL_CONFIG || {}).bridgeUrl;
+    if (!url) return;
+    let backoff = 1000;
+    const open = () => {
+      let socket;
+      try {
+        socket = new WebSocket(url);
+      } catch (err) {
+        return;
+      }
+      socket.addEventListener("open", () => {
+        backoff = 1000;
+      });
+      socket.addEventListener("message", (event) => {
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch (err) {
+          return;
+        }
+        if (!payload || payload.type !== "scan" || !payload.value) return;
+        cardValue.value = String(payload.value).trim();
+        // Fire the same event a person typing would, so watchField revalidates
+        // rather than leaving a stale error under a now-correct value.
+        cardValue.dispatchEvent(new Event("input", { bubbles: true }));
+        if (!cardCheck.ok()) cardCheck.flag();
+      });
+      socket.addEventListener("close", () => {
+        setTimeout(open, backoff);
+        backoff = Math.min(backoff * 2, 15000);
+      });
+    };
+    open();
+  })();
+
   /* ---------------- mode switch ---------------- */
 
   function setMode(next) {

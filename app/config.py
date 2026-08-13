@@ -30,6 +30,12 @@ class Settings(BaseSettings):
     # security here, and every use of it is written to the audit log.
     staff_pin: str = "1234"
 
+    # Set only when the kiosk's reader cannot act as a keyboard and
+    # bridge/reader_bridge.py is supplying scans instead — normally
+    # "ws://127.0.0.1:8765", pointing at the kiosk laptop's own loopback rather
+    # than at this server. Empty disables the bridge client entirely.
+    kiosk_bridge_url: str = ""
+
     session_cookie: str = "colomeal_session"
     session_max_age_seconds: int = 60 * 60 * 12
 

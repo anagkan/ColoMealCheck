@@ -1,0 +1,4 @@
+# Installed on the kiosk laptop, never in the app container — the container has
+# no USB access, so the bridge cannot run there.
+pyscard==2.2.1
+websockets>=12,<16
