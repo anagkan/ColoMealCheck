@@ -954,6 +954,73 @@
   setInterval(tickBanner, 1000);
   setInterval(refreshService, 60000);
 
+  /* ---------------- PC/SC reader bridge (optional) ----------------
+   *
+   * A keyboard-wedge reader needs nothing here: it types into the hidden sink
+   * and the Enter handler above does the rest. A PC/SC-only reader presents no
+   * keyboard at all, so bridge/reader_bridge.py runs on this laptop and offers
+   * serials on a loopback WebSocket instead.
+   *
+   * The bridge is an input path, not a second scanning path: it hands the
+   * serial to the same submitScan() a tap would have used, and obeys the same
+   * ownership rule as the sink. Without that check a card tapped while the
+   * guest popup is open would submit underneath it.
+   *
+   * Absent bridgeUrl this is inert, so wedge installs are unaffected. */
+
+  function connectBridge() {
+    if (!CONFIG.bridgeUrl) return;
+    let socket;
+    let backoff = 1000;
+
+    const setBadge = (down) => {
+      const badge = el("bridgeBadge");
+      if (badge) badge.hidden = !down;
+    };
+
+    const open = () => {
+      try {
+        socket = new WebSocket(CONFIG.bridgeUrl);
+      } catch (err) {
+        // Bad URL — retrying cannot fix it, but the badge must still show,
+        // because a reader that silently stops working is how a kiosk dies.
+        setBadge(true);
+        return;
+      }
+
+      socket.addEventListener("open", () => {
+        backoff = 1000;
+        setBadge(false);
+      });
+
+      socket.addEventListener("message", (event) => {
+        let payload;
+        try {
+          payload = JSON.parse(event.data);
+        } catch (err) {
+          return;
+        }
+        if (!payload || payload.type !== "scan") return;
+        const value = String(payload.value || "").trim();
+        if (!value || !readerOwnsKeyboard()) return;
+        submitScan(value, "csn");
+      });
+
+      socket.addEventListener("close", () => {
+        setBadge(true);
+        setTimeout(open, backoff);
+        backoff = Math.min(backoff * 2, 15000);
+      });
+
+      // 'error' is always followed by 'close', which owns the retry.
+      socket.addEventListener("error", () => setBadge(true));
+    };
+
+    open();
+  }
+
+  connectBridge();
+
   writeQueue(readQueue());
   flushQueue();
   focusReader();

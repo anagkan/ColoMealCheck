@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db
 from app.services.club_settings import load_config
 from app.services.periods import next_period, resolve_period, seconds_remaining
@@ -22,7 +23,12 @@ def enroll_page(request: Request, value: str = ""):
     arrives at an unrecognized card and staff follow the link from the result.
     """
     return templates.TemplateResponse(
-        request, "kiosk/enroll.html", {"prefill_value": value.strip()}
+        request,
+        "kiosk/enroll.html",
+        {
+            "prefill_value": value.strip(),
+            "bridge_url": get_settings().kiosk_bridge_url,
+        },
     )
 
 
@@ -46,5 +52,6 @@ def kiosk(request: Request, db: Session = Depends(get_db)):
             "seconds_remaining": seconds_remaining(resolved),
             "next_period": upcoming.period if upcoming else None,
             "seconds_until_next": upcoming.seconds_until if upcoming else None,
+            "bridge_url": get_settings().kiosk_bridge_url,
         },
     )

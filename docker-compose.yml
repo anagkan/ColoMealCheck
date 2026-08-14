@@ -28,6 +28,9 @@ services:
       BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
       BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
       STAFF_PIN: ${STAFF_PIN:-1234}
+      # Only set on a kiosk whose reader cannot type; see bridge/README.md.
+      # Points at the kiosk laptop's own loopback, not at this container.
+      KIOSK_BRIDGE_URL: ${KIOSK_BRIDGE_URL:-}
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:

@@ -144,6 +144,10 @@
     </div>
   </main>
 
+  <script>
+    // Empty unless this kiosk uses a PC/SC reader; see bridge/README.md.
+    window.ENROLL_CONFIG = { bridgeUrl: {{ bridge_url | tojson }} };
+  </script>
   <script src="/static/enroll.js"></script>
 </body>
 </html>

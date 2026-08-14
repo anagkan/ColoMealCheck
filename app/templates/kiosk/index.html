@@ -28,6 +28,10 @@
     </div>
     <div class="bar-right">
       <span id="offlineBadge" class="offline" hidden></span>
+      <!-- Only meaningful on a kiosk using the PC/SC bridge; a wedge reader
+           never sets bridgeUrl and this stays hidden forever. A dead bridge
+           means cards silently stop working, so it has to be visible. -->
+      <span id="bridgeBadge" class="offline" hidden>Reader bridge offline</span>
       <span id="clock" class="clock"></span>
       <a class="bar-link" href="/enroll">Enroll</a>
       <a class="bar-link" href="/admin">Admin</a>
@@ -267,7 +271,9 @@
       periodName: {{ (period.name if period else None) | tojson }},
       secondsRemaining: {{ seconds_remaining if seconds_remaining is not none else 0 }},
       nextPeriodName: {{ (next_period.name if next_period else None) | tojson }},
-      secondsUntilNext: {{ seconds_until_next if seconds_until_next is not none else 0 }}
+      secondsUntilNext: {{ seconds_until_next if seconds_until_next is not none else 0 }},
+      // Empty unless this kiosk uses a PC/SC reader; see bridge/README.md.
+      bridgeUrl: {{ bridge_url | tojson }}
     };
   </script>
   <script src="/static/kiosk.js"></script>
