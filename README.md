@@ -11,18 +11,24 @@ reader, running Chrome pointed at it.
 
 ---
 
-## Start here: verify the card serial is stable
+## The card serial is stable — settled
 
-**Do this before anything else.** The system identifies members by their card's
-CSN (serial number), which any reader can read without Princeton's encryption
-keys. That works on iCLASS 202x/SE cards, whose CSN is fixed.
+The system identifies members by their card's CSN (serial number), which any
+reader can read without Princeton's encryption keys. That works on iCLASS
+202x/SE cards, whose CSN is fixed. It would **not** work on iCLASS **Seos**
+cards, which emit a 4-byte *random* identifier by design, specifically to
+prevent this kind of tracking — every tap would look like a different card, and
+the whole approach would collapse.
 
-It does **not** work on iCLASS **Seos** cards, which emit a 4-byte *random*
-identifier by design, specifically to prevent this kind of tracking. If
-Princeton has migrated to Seos, every tap looks like a different card.
+**TigerCards are iCLASS, not Seos.** This is confirmed, and it is the single
+assumption the design rests on. A tapped card reads as a 16-hex-digit CSN — four
+unique bytes followed by the standard iCLASS tail — matching the format
+`app/services/credentials.py` validates.
 
-Borrow 8–10 TigerCards across class years and tap each one three times. If a
-card reports a different value each time, stop and pick a fallback:
+The rest of this section is contingency. If Princeton ever migrates to Seos, the
+symptom is a card reporting a different value on each tap; borrow 8–10
+TigerCards across class years, tap each three times, and if the values move,
+pick a fallback:
 
 - **125 kHz Prox side.** If TigerCards are dual-technology, the Prox number is
   stable and needs no key. Use a prox reader with a Wiegand-to-USB converter and

@@ -37,8 +37,17 @@ That is a driver problem:
   via `ioreg -r -c IOUSBHostInterface -l`) needs the manufacturer's own driver;
   the built-in `ifd-ccid` will not bind to it. Check that any vendor bundle in
   `/usr/local/libexec/SmartCardServices/drivers/` actually loads — one listed as
-  `(null):(null)` is failing, which on Apple Silicon usually means it predates
-  the architecture.
+  `(null):(null)` is failing. Confirm it has a slice for this machine's
+  architecture before believing it:
+  `file <bundle>/Contents/MacOS/*.dylib`. An x86_64-only driver cannot load into
+  the arm64 PC/SC daemon on Apple Silicon, and Rosetta does not help. That is
+  what rules out the OMNIKEY 5x21 family here: HID's macOS driver for it is
+  x86_64/i386 only, so those readers cannot be used on an Apple Silicon Mac at
+  all — by this bridge or by anything else.
+
+A reader presenting a standard CCID interface (`bInterfaceClass = 11`) needs no
+vendor driver on any platform. The OMNIKEY 5427CK ships that way, and macOS
+drives it with the built-in `ifd-ccid` out of the box.
 - **Linux** — `sudo apt install pcscd libpcsclite-dev swig`, then confirm with
   `pcsc_scan`.
 - **Windows** — the PC/SC stack is built in; install the vendor driver and
@@ -69,10 +78,13 @@ bridge/.venv/bin/python bridge/reader_bridge.py --simulate \
 
 Type a serial, press Enter, and watch the kiosk. That exercises the socket, the
 origin check, the ownership rule, `submitScan()` and the result screen — the
-whole path a tap takes. Only `read_uid()` and the polling loop are left
-untested, and those are the parts that need hardware.
+whole path a tap takes, short of the card read itself.
 
 Use the serial of a card that is **already enrolled** to see a real check-in.
+
+The full path, card included, has been run against an OMNIKEY 5427CK in CCID
+mode on macOS: tapping filled and validated the card field on `/enroll`, and a
+tap at the kiosk checked a member in.
 
 ## Running it
 

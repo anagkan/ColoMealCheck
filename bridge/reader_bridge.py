@@ -294,14 +294,14 @@ def probe(interval: float) -> int:
         )
         return 1
 
-    print("Readers:")
+    print("Readers:", flush=True)
     for reader in found:
-        print(f"  - {reader}")
-    print("\nTap a card (Ctrl-C to stop).")
+        print(f"  - {reader}", flush=True)
+    print("\nTap a card (Ctrl-C to stop).", flush=True)
 
     stop = threading.Event()
     try:
-        poll_readers(lambda serial: print(f"  card: {serial}"), stop, interval)
+        poll_readers(lambda serial: print(f"  card: {serial}", flush=True), stop, interval)
     except KeyboardInterrupt:
         pass
     return 0
