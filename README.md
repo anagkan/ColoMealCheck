@@ -16,9 +16,8 @@ reader, running Chrome pointed at it.
 The system identifies members by their card's CSN (serial number), which any
 reader can read without Princeton's encryption keys. That works on iCLASS
 202x/SE cards, whose CSN is fixed. It would **not** work on iCLASS **Seos**
-cards, which emit a 4-byte *random* identifier by design, specifically to
-prevent this kind of tracking — every tap would look like a different card, and
-the whole approach would collapse.
+cards, which emit a 4-byte *random* identifier by design — every tap would look
+like a different card, and the whole approach would collapse.
 
 **TigerCards are iCLASS, not Seos.** This is confirmed, and it is the single
 assumption the design rests on. A tapped card reads as a 16-hex-digit CSN — four
@@ -47,7 +46,7 @@ so any of these swaps in without touching the rules engine or the schema.
 
 ```bash
 cp .env.example .env
-# Set SECRET_KEY (the file tells you how to generate one), POSTGRES_PASSWORD,
+# Set SECRET_KEY (the file gives you the command), POSTGRES_PASSWORD,
 # and STAFF_PIN. Then:
 docker compose up -d
 docker compose logs api        # the first-boot admin password prints here once
@@ -62,68 +61,66 @@ The app is at `http://<server-host>:8000`:
 | `/enroll` | Staff page for enrolling a member and their card. Gated by the staff PIN. |
 | `/admin` | The office: roster, analytics, schedule, reports, audit. Gated by a staff login. |
 
-Enrolling is what *creates* a member. The usual case is someone who is not in
-the system at all, so the form asks for first name, last name, PUID, NetID, class
-year and meal plan alongside the card and the photo, and writes the person and
-their credential in one transaction — there is never a member row with no way to
-check in, or a card bound to nobody. A second mode on the same page, **Already in
-the system**, handles the replacement TigerCard: find the member, tap the new
-card, and their old one is retired automatically.
+Two containers, no reverse proxy: Uvicorn serves the API, the pages and the
+photos directly. Postgres and the photo directory are on named volumes.
 
-A member is identified by **two** things, and both are required: the PUID
-printed on their card, and the NetID every other Princeton system knows them by.
-The NetID is what makes a roster reconcilable against anything outside this app,
-and enrollment is the only moment the member is standing there to be asked for
-it — so unlike a guest's, it has no "has none" escape hatch. Every member of this
-club is a Princeton affiliate who has one. It is stored lowercase, unique across
-members, searchable anywhere a PUID is, and carried into every member CSV.
+### Enrollment
+
+Enrolling is what *creates* a member. The usual case is someone not in the
+system at all, so the form asks for first name, last name, PUID, NetID, class
+year and meal plan alongside the card and photo, and writes the person and their
+credential in one transaction — there is never a member row with no way to check
+in, or a card bound to nobody. A second mode on the same page, **Already in the
+system**, handles the replacement TigerCard: find the member, tap the new card,
+and their old one is retired automatically.
+
+A member is identified by **two** things, both required: the PUID printed on
+their card, and the NetID every other Princeton system knows them by. The NetID
+is what makes a roster reconcilable against anything outside this app, and
+enrollment is the only moment the member is standing there to be asked for it —
+so unlike a guest's, it has no "has none" escape hatch. It is stored lowercase,
+unique across members, searchable anywhere a PUID is, and carried into every
+member CSV.
 
 The column itself is nullable, because members enrolled before it existed have
 no NetID on file and inventing one would be worse than leaving the gap visible.
 The members list prints a dash for each of them — that dash is the backfill
-worklist, and the admin edit form is where it gets filled in, which is why blank
-is accepted there and refused at the kiosk.
+worklist, which is why blank is accepted in the admin edit form and refused at
+enrollment.
 
-The three identifiers are checked for shape before anything is written: a card
-CSN must be 16 hexadecimal digits, a PUID nine decimal digits, and a NetID 2–8
+All three identifiers are checked for shape before anything is written: a card
+CSN must be 16 hexadecimal digits, a PUID nine decimal digits, a NetID 2–8
 letters and digits starting with a letter. Case and the separators some readers
-emit are normalized away first, so `04a1-b2c3-d4e5-f601` is accepted and stored
-as `04A1B2C3D4E5F601`, and `SOkafor` as `sokafor`. Every rule lives on the page
+emit are normalized away first, so `04a1-b2c3-d4e5-f601` is stored as
+`04A1B2C3D4E5F601`, and `SOkafor` as `sokafor`. Every rule lives on the page
 *and* on `/api/enroll` and `/api/enroll/new` — the page for a message staff can
 act on while the member is still standing there, the API so a truncated read
-cannot become a card that never scans. A PUID or NetID already on file is
-refused by name, never merged: at this desk a clash is almost always a typo, and
-quietly attaching a second row to a person already enrolled is far harder to
-notice than an error message. Scans themselves are deliberately unchecked, so
-credentials enrolled before these rules keep working.
+cannot become a card that never scans. Scans themselves are deliberately
+unchecked, so credentials enrolled before these rules keep working.
 
-The page says so at the field, as it is typed, rather than saving the complaint
-for the submit button: a bad card read is far cheaper to fix while the card is
-still in someone's hand. The message appears 200ms after typing stops — the
-reader types all 16 digits in a burst, and per-keystroke checking would flash a
-complaint across every good tap — and disappears the instant the value is right.
-
-Both conflict checks refuse rather than merge. A PUID already on file names the
-person holding it; a card that already scans as somebody else is treated as a
+**Conflicts refuse rather than merge.** A PUID or NetID already on file is
+rejected by name; a card that already scans as somebody else is treated as a
 mis-tap. At an enrollment desk both are almost always a typo or a stray tap, and
-quietly moving a card off an existing member is far harder to notice than an
-error message.
+quietly attaching a second row to someone already enrolled — or moving a card
+off an existing member — is far harder to notice than an error message.
+
+The page complains at the field as it is typed rather than saving it for the
+submit button: a bad card read is far cheaper to fix while the card is still in
+someone's hand. The message appears 200ms after typing stops — the reader types
+all 16 digits in a burst, and per-keystroke checking would flash a complaint
+across every good tap — and disappears the instant the value is right.
 
 Enrollment is a separate page rather than a panel over the kiosk: it is slow,
 staff-driven work involving a photo, and it must not occupy the check-in screen
-while a queue is forming behind it. When an unrecognized card is tapped, the
-kiosk shows a red band with a **Staff: link this card** button that carries the
-card value across to `/enroll`, so nobody has to tap twice.
-
-Two containers, no reverse proxy: Uvicorn serves the API, the pages and the
-photos directly. Postgres and the photo directory are on named volumes.
+while a queue forms behind it. When an unrecognized card is tapped, the kiosk
+shows a red band with a **Staff: link this card** button that carries the card
+value across to `/enroll`, so nobody has to tap twice.
 
 ### Running from the published image
 
-For someone who wants to try the kiosk without a copy of the source — a friend
-testing it, or a spare laptop that has Docker and nothing else.
+For someone who wants to try the kiosk without a copy of the source.
 `docker-compose.deploy.yml` pulls a built image from GHCR instead of building
-`api` from this directory, and reads the same `.env` as the file above.
+`api` from this directory, and reads the same `.env` as above.
 
 The image is private, so pulling it needs a GitHub token with `read:packages`:
 
@@ -133,8 +130,8 @@ docker compose -f docker-compose.deploy.yml up -d
 docker compose -f docker-compose.deploy.yml logs api   # admin password, once
 ```
 
-Access is governed by this repository's collaborator list rather than by a
-permission list of its own, which is what the `org.opencontainers.image.source`
+Access is governed by this repository's collaborator list rather than a
+permission list of its own — that is what the `org.opencontainers.image.source`
 label in the Dockerfile buys: it links the package to the repository, so adding
 someone here is all it takes.
 
@@ -144,12 +141,11 @@ while the app is being tried out, and a hazard once a meal service depends on
 it, because a restart can move the kiosk onto a build nobody chose.
 
 Pin it before that point. Every CI build also publishes the short commit SHA as
-a tag — bare, with no prefix, so the build of `ca55f6f` is
-`ghcr.io/anagkan/colomealcheck:ca55f6f`. Those are never rewritten, so there is
-always a specific thing to pin to.
+a bare tag, so the build of `ca55f6f` is
+`ghcr.io/anagkan/colomealcheck:ca55f6f`. Those are never rewritten.
 
 CI publishes on its own; the rest of this section is for doing it by hand, which
-is worth knowing when the workflow is the thing that is broken.
+matters when the workflow is the thing that is broken.
 
 ```bash
 docker buildx build \
@@ -159,19 +155,19 @@ docker buildx build \
   --push .
 ```
 
-Both architectures, always. This is built on an Apple Silicon Mac and will be
-run on whatever the club has lying around; an image pushed for one architecture
+Both architectures, always. This is built on an Apple Silicon Mac and will run
+on whatever the club has lying around; an image pushed for one architecture
 fails on the other with `exec format error`, which says nothing about what
-actually went wrong. That needs a builder using the `docker-container` driver —
-the default one silently cannot produce a multi-architecture manifest, and the
-`--platform` flag above appears to be accepted either way:
+actually went wrong. That needs a builder on the `docker-container` driver — the
+default one silently cannot produce a multi-architecture manifest, and accepts
+`--platform` anyway:
 
 ```bash
 docker buildx create --name colomeal --driver docker-container --bootstrap --use
 ```
 
-Check the result before handing it to anyone — and if `docker-compose.deploy.yml`
-has been pinned to a version by then, bump it to match:
+Check the result before handing it to anyone, and bump
+`docker-compose.deploy.yml` if it has been pinned by then:
 
 ```bash
 docker buildx imagetools inspect ghcr.io/anagkan/colomealcheck:0.2.0
@@ -205,18 +201,32 @@ front of it. Nothing in the app assumes HTTP.
 
 ### Reader setup
 
-Configure the OMNIKEY 5427CK in **keyboard wedge** mode with a suffix of Enter.
-Before opening the app, tap a card into a text editor and confirm digits appear
-followed by a newline. Reader configuration problems surface here, not in the
-app. A distinctive prefix is worth setting so stray typing can never be mistaken
-for a scan.
+The OMNIKEY 5427CK runs in **keyboard wedge** mode. Before opening the app, tap
+a card into a text editor and confirm 16 hex digits appear followed by a
+newline. Reader problems surface here, not in the app.
+
+The working configuration, for a reader ever reset or replaced: CSN as the only
+data field, `HEX` string format, `[ENTER]` post-stroke, US keyboard layout,
+wedge encryption off, no pre-strokes, no padding or truncation. These live in
+the reader's own web tool at `http://192.168.63.99/`, served over its CDC-EEM
+interface — reachable from **Windows only**, with HID's OMNIKEY 5x27 EEM driver
+installed before the reader is first plugged in. macOS never binds that
+interface, so the kiosk laptop cannot reconfigure the reader.
+
+Do **not** configure a prefix. Nothing strips one: `normalizeCard` in
+`app/static/enroll.js` removes only whitespace and hyphens, and both it and
+`app/services/credentials.py` require exactly 16 hex digits, so a prefix fails
+every enrollment and every lookup. Stray typing is kept out of a scan by
+`readerOwnsKeyboard()` in `app/static/kiosk.js`, not by a prefix. A trailing
+space is harmless — trimmed on both entry paths and stripped again server-side.
 
 If nothing appears in the text editor, check what reader you actually have
 before debugging the app. A PC/SC-only reader — the OMNIKEY 5x21 family, and
 most CCID readers — presents no keyboard to the operating system and can never
 type, so the kiosk will never see a scan no matter how it is configured. See
 [`bridge/README.md`](bridge/README.md) for the fallback: a small local process
-that reads serials over PC/SC and feeds them to the kiosk page.
+that reads serials over PC/SC and feeds them to the kiosk page. It is inert
+unless `KIOSK_BRIDGE_URL` is set.
 
 ---
 
@@ -250,44 +260,41 @@ Design decisions worth knowing:
   a member's second tap in a meal period, which fills the host in already.
 - **A guest with no NetID says so, and why.** Visiting parents, alumni and
   siblings have none, so the popup offers a **Guest has no NetID** tick box that
-  swaps the field for a required reason. The field can never simply be left
-  blank: a blank is indistinguishable from a rush at the door, and the reason is
-  what makes the row traceable afterwards. Exactly one of the two is ever stored,
-  and both appear in the daily attendance CSV.
-- **An alumni meal belongs to nobody.** An alum is not on the roster, hosts
-  nobody and is hosted by nobody, so the **Alumni Meal** button at the bottom of
-  the kiosk asks for no member at all and the row it writes is the only record
-  the meal leaves: first name, last name, class year, and an email address *or* a
-  phone number — either one is enough, but not neither. That last rule is the
-  whole point of the popup. A NetID is asked for too and is the one **optional**
-  field: many alumni keep one for life and it is the cleanest link back to the
-  member they used to be, but plenty have let theirs lapse — and a NetID
-  identifies an alum without reaching them, so it can neither be required nor
-  stand in for a contact detail. Given one, it is format-checked and stored
-  lowercase like every other NetID here. There is no card, PUID or NetID to recover a contact
-  detail from once the alum has walked away, so a record nobody can be reached
-  from is worth no more than no record at all. Alumni meals draw down no
-  allotment and no guest quota, are counted separately on the day view, and carry
-  their identity into the daily attendance CSV. This is the only kind of meal
-  whose `member_id` is NULL, which is why every per-member report filters on
-  `kind` — see `app/models.py::Attendance`.
+  swaps the field for a required reason. It can never simply be left blank: a
+  blank is indistinguishable from a rush at the door, and the reason is what
+  makes the row traceable afterwards. Exactly one of the two is ever stored, and
+  both appear in the daily attendance CSV.
+- **An alumni meal belongs to nobody.** An alum is not on the roster, so the
+  **Alumni Meal** button asks for no member at all and the row it writes is the
+  only record the meal leaves: first name, last name, class year, and an email
+  address *or* a phone number — either one, but not neither. That last rule is
+  the whole point of the popup: there is nothing to recover a contact detail
+  from once the alum has walked away, and a record nobody can be reached from is
+  worth no more than no record at all. A NetID is asked for too and is the one
+  **optional** field — many alumni keep one for life and it is the cleanest link
+  back to the member they used to be, but plenty have let theirs lapse, and a
+  NetID identifies an alum without reaching them, so it can neither be required
+  nor stand in for a contact detail. Alumni meals draw down no allotment and no
+  guest quota, are counted separately on the day view, and carry their identity
+  into the daily CSV. This is the only kind of meal whose `member_id` is NULL,
+  which is why every per-member report filters on `kind` — see
+  `app/models.py::Attendance`.
 - **The meal week starts Monday.** A Sunday dinner is the last meal of its week;
   Monday breakfast opens a fresh allotment. Nothing rolls over.
 - **Guest quota resets on the 1st** of the calendar month, not on a rolling
   30-day window.
 - **Service dates, not timestamps.** Every meal stores a `service_date` computed
   in club-local time at write time, and every report groups by it. This is what
-  makes the DST transitions non-events — see the tests in `tests/test_periods.py`
-  that pin down both of them.
+  makes the DST transitions non-events — see `tests/test_periods.py`, which pins
+  down both of them.
 
 The 19-meal plan means "every meal we serve": the default schedule is
 breakfast/lunch/dinner on weekdays plus brunch/dinner on weekends, which is
 exactly 19 windows. The admin schedule page shows this count and warns if an
 edit breaks it. The 14-meal plan is just a smaller number — a 14-plan member
 eating breakfast spends one of their 14 on it. The **RCA/PAA** plan is smaller
-again at 9 meals a week, for RCAs and PAAs who eat here part-time; it carries
-the same two guest meals a month as every other plan, since the guest quota is
-club-wide and does not scale with the plan.
+again at 9 meals a week, and carries the same two guest meals a month as every
+other plan, since the guest quota is club-wide and does not scale with the plan.
 
 | Meal | Days | Window |
 | --- | --- | --- |
@@ -302,8 +309,9 @@ database that already has a schedule — edit those windows at `/admin/schedule`
 or update the rows directly. Editing times in place keeps the row IDs, so past
 attendance stays attached to the meal it was eaten at.
 
-All of the numbers (19, 14, 9, 2, the week start day) live in the `settings` table
-and are editable at `/admin/settings`. There are no magic numbers in the code.
+All of the numbers (19, 14, 9, 2, the week start day) live in the `settings`
+table and are editable at `/admin/settings`. There are no magic numbers in the
+code.
 
 ---
 
@@ -322,7 +330,7 @@ list — active members with no card linked — which is the list to work throug
 *how is the club actually being used* — over any date range (default: the last
 30 days), sliceable by class year, meal plan, status, name or PUID.
 
-Every column in the member table sorts, by clicking its heading: meals eaten,
+Every column in the member table sorts by clicking its heading: meals eaten,
 meals per week, share of plan used, days attended, guest meals hosted, overages,
 last seen, and the member fields themselves. Above it are club-wide breakdowns
 by class year, plan and status, each showing headcount, meals, meals per member
@@ -353,7 +361,7 @@ never eaten here is not the most recently seen.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 npm ci                            # jsdom, for the browser JavaScript tests
-.venv/bin/python -m pytest        # 336 tests, ~15s
+.venv/bin/python -m pytest        # 336 tests, ~30s
 ```
 
 Tests run against SQLite, which honours the same partial unique indexes used on
@@ -370,14 +378,14 @@ half-typed digits to the next card scan. Both have happened.
 
 The rule the tests pin down: **the reader sink owns the keyboard only on the
 idle and result screens.** On any screen with something to type into, the human
-owns it — and on every screen transition back, focus is *forcibly* reclaimed
-and both buffers cleared, rather than politely requested.
+owns it — and on every screen transition back, focus is *forcibly* reclaimed and
+both buffers cleared, rather than politely requested.
 
-Skipped if node or jsdom is missing, so contributors without node still get a
-clean run. Set `REQUIRE_DOM_TESTS=1` to turn that skip into a hard error — CI
-sets it, because there a missing install is indistinguishable from a pass.
+These are skipped if node or jsdom is missing, so contributors without node
+still get a clean run. `REQUIRE_DOM_TESTS=1` turns that skip into a hard error —
+CI sets it, because there a missing install is indistinguishable from a pass.
 
-It also covers the meal banner's two countdowns. Both count down from a
+The same file covers the meal banner's two countdowns. Both count down from a
 *duration* the server supplies, re-synced every minute, rather than from a
 timestamp compared against the laptop's own clock — a kiosk with a wrong clock
 would otherwise display a nonsense countdown. `seconds_remaining` and
@@ -390,15 +398,14 @@ kiosk re-asks the server what is true rather than assuming the next state.
 names Monday breakfast rather than the following weekend's brunch, and it orders
 candidates by clock time rather than `sort_order` — that column is a display
 preference and nothing stops it disagreeing with the timetable. With no active
-windows at all there is no next meal to name, and the banner falls back to
-**Outside Meal Hours**.
+windows at all, the banner falls back to **Outside Meal Hours**.
 
-The same file runs `enroll.js` against the rendered `/enroll` page, for a
-related reason: that page submits to two different endpoints depending on which
-mode it is in. Posting a new member to the link-a-card endpoint merely fails,
-but posting a replacement card to the create endpoint would try to duplicate a
-person who already exists. Which endpoint gets picked is only observable from a
-browser, so it is asserted there.
+It also runs `enroll.js` against the rendered `/enroll` page, for a related
+reason: that page submits to two different endpoints depending on its mode.
+Posting a new member to the link-a-card endpoint merely fails, but posting a
+replacement card to the create endpoint would try to duplicate a person who
+already exists. Which endpoint gets picked is only observable from a browser, so
+it is asserted there.
 
 ```
 app/
@@ -410,11 +417,15 @@ app/
     alumni.py         contact details for a meal with no member behind it
     netid.py          the NetID rule, shared by members and guests
     credentials.py    card <-> member binding, reissue, revocation
+    club_settings.py  the editable numbers behind every rule
     reports.py        aggregations, member analytics and CSV
+    photos.py         enrollment photo storage
+    audit.py          overrides and forced entries, with an actor
   routers/            HTTP. Thin — all logic is in services/.
   models.py           schema, including the two partial unique indexes
   templates/kiosk/    the door screen
   templates/admin/    the office screens
+bridge/               PC/SC fallback for a reader that cannot type
 tests/                336 tests; start with test_scan_rules.py
 ```
 
