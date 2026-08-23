@@ -186,15 +186,22 @@ This launches Chrome in kiosk mode with two flags that are **not optional**:
 
 ```
 --unsafely-treat-insecure-origin-as-secure=http://<host>:8000
---user-data-dir=/tmp/colomealcheck-kiosk
+--user-data-dir=$HOME/.colomealcheck-kiosk
 ```
 
-The webcam API (`getUserMedia`) only exists in a *secure context*. A plain-HTTP
-LAN address is not one, so without these flags `navigator.mediaDevices` is
-`undefined` and enrollment photos fail **silently**. The flag is also ignored
-unless a separate profile directory is given — both flags, or neither works.
-The enrollment screen detects the missing API and says so, with a file-upload
-fallback, rather than offering a dead button.
+Two browser features the kiosk depends on exist only in a *secure context*, and
+a plain-HTTP LAN address is not one. The webcam API (`getUserMedia`) is the
+first: without these flags `navigator.mediaDevices` is `undefined` and
+enrollment photos fail **silently**. Service workers are the second, which is
+what lets the kiosk start with the server away — see below. The flag is also
+ignored unless a separate profile directory is given, so it is both flags or
+neither.
+
+Both failures are quiet by nature, and each says so where it can: the
+enrollment screen detects the missing webcam API and offers a file-upload
+fallback rather than a dead button, and `kiosk.js` writes a line to the console
+when it finds no `navigator.serviceWorker`. Launch through `run-kiosk.sh` and
+neither arises.
 
 If you later want the app reachable from more than the one laptop, put TLS in
 front of it. Nothing in the app assumes HTTP.
@@ -212,12 +219,29 @@ taken at 18:05 and synced at 18:40 still lands in dinner, in the right meal week
 Replays are attempted every 20 seconds and whenever the browser regains its
 connection. The queue survives a reload and a browser restart.
 
-Four things are worth knowing before relying on it:
+Six things are worth knowing before relying on it:
 
-- **The page has to already be open.** There is no offline caching of the page
-  itself, and the kiosk is served by the same app the scans go to — so if the
-  *server* is down and the laptop reboots, the kiosk cannot start at all. This
-  protects against a network blip, not against the server going away.
+- **The page starts without the server, but only from a cache it already has.**
+  A service worker (`app/static/sw.js`) keeps a copy of the door screen — the
+  page, `kiosk.js`, `kiosk.css` and the crest — so the kiosk still opens after a
+  power cut that brings the laptop back before the server. It has to have loaded
+  the kiosk successfully at least once on that browser profile for there to be
+  anything to open. The cache is a fallback and never the normal path: every
+  load goes to the network first and refreshes the cache behind it, so a kiosk
+  cannot end up quietly running last month's rules.
+- **The browser profile has to survive the reboot too.** Both the cache and the
+  queue live in it, so `run-kiosk.sh` keeps the profile at
+  `$HOME/.colomealcheck-kiosk` rather than under `/tmp`, which most Linux
+  systems clear on boot — losing both at exactly the moment they are wanted.
+  Older installs kept it in the temp directory; the script moves it across on
+  the next launch rather than starting empty, since it may still hold scans
+  waiting to be replayed. Delete that directory and the kiosk is back to needing
+  the server in order to start.
+- **A kiosk booted from cache does not know the schedule.** The meal banner is
+  rendered server-side, so a cached copy carries whatever meal was being served
+  when it was cached. Rather than announce breakfast over dinner, the banner
+  reads **Offline — meal times unavailable** until `/api/status` answers, and
+  fills itself in the moment the server is back.
 - **The result screen goes blind.** The server is what turns a card into a
   person, so an offline check-in shows "Saved offline" with no name, photo or
   weekly count. Staff cannot confirm who tapped until it syncs.
@@ -409,7 +433,7 @@ never eaten here is not the most recently seen.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 npm ci                            # jsdom, for the browser JavaScript tests
-.venv/bin/python -m pytest        # 372 tests, ~30s
+.venv/bin/python -m pytest        # 380 tests, ~35s
 ```
 
 Tests run against SQLite, which honours the same partial unique indexes used on
@@ -481,8 +505,10 @@ app/
   models.py           schema, including the two partial unique indexes
   templates/kiosk/    the door screen
   templates/admin/    the office screens
+  static/sw.js        service worker: boots the door screen without the server
+  static/manifest.webmanifest
 bridge/               PC/SC fallback for a reader that cannot type
-tests/                372 tests; start with test_scan_rules.py
+tests/                380 tests; start with test_scan_rules.py
 ```
 
 Schema changes: edit `app/models.py`, then
