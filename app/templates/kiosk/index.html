@@ -4,6 +4,22 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Colonial Club — Meal Check-In</title>
+
+  {# Installable, and — the part that matters here — able to boot from cache when
+     the server is away. See app/static/sw.js, registered at the bottom of
+     kiosk.js. iOS ignores the manifest's icons and display mode, so it gets the
+     two meta tags of its own; every other browser reads the manifest. #}
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#000985">
+  <meta name="mobile-web-app-capable" content="yes">
+  {# The apple- prefixed form is deprecated and warns in Chrome, but it is still
+     the only one Safari reads. Both, until Safari catches up. #}
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png">
+  {# Named explicitly so the browser stops probing /favicon.ico, which this app
+     has never served. #}
+  <link rel="icon" href="/static/icons/icon-32.png" sizes="32x32" type="image/png">
+
   <link rel="stylesheet" href="/static/kiosk.css">
 </head>
 <body class="kiosk">

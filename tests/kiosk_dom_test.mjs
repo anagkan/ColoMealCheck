@@ -1890,6 +1890,145 @@ async function testTheOldQueueFormatIsCarriedAcross() {
   );
 }
 
+/* ---------------- booting from the service worker's cache ----------------
+ *
+ * The meal banner is seeded server-side so the first paint is already right.
+ * That seed is a liability the moment the page can come from a cache instead:
+ * a shell cached at breakfast, replayed at dinner, would announce breakfast and
+ * tick a live countdown under it. sw.js splices window.KIOSK_FROM_CACHE into
+ * the HTML it serves from cache, and these pin down what kiosk.js does with it.
+ */
+
+const servingBreakfast = {
+  serving: true, periodName: "Breakfast", secondsRemaining: 600,
+  nextPeriodName: "Lunch", secondsUntilNext: 7200,
+};
+
+const bannerText = (window) =>
+  window.document.getElementById("mealBannerName").textContent;
+
+const statusIs = (payload) => (url) =>
+  url.includes("/api/status") ? payload : null;
+
+async function testACachedShellDoesNotAnnounceAStaleMeal() {
+  const { window, calls } = boot(
+    servingBreakfast,
+    (url) => (url.includes("/api/status") ? OFFLINE : null),
+    (w) => { w.KIOSK_FROM_CACHE = true; }
+  );
+
+  await settle();
+
+  check(
+    "a kiosk booted from cache does not claim the meal its markup was cached during",
+    !bannerText(window).includes("Breakfast"),
+    `banner read "${bannerText(window)}"`
+  );
+  check(
+    "it says the schedule is unavailable instead",
+    bannerText(window).includes("Offline"),
+    `banner read "${bannerText(window)}"`
+  );
+  check(
+    "and the countdown is hidden rather than counting down a meal nobody is serving",
+    window.document.getElementById("mealBannerCountdown").hidden === true
+  );
+  check(
+    "the service label stops claiming a meal too",
+    !window.document.getElementById("serviceLabel").textContent.includes("Breakfast"),
+    `label read "${window.document.getElementById("serviceLabel").textContent}"`
+  );
+  check(
+    "and it asks the server what is true straight away, not in a minute's time",
+    calls.some((c) => String(c.url).includes("/api/status")),
+    `called ${JSON.stringify(calls.map((c) => String(c.url)))}`
+  );
+}
+
+async function testACachedShellRecoversOnceTheServerAnswers() {
+  let offline = true;
+  const dinner = {
+    serving: true, period_name: "Dinner", period_ends: "7:45 PM",
+    seconds_remaining: 1800, next_period_name: null, seconds_until_next: null,
+  };
+  const { window } = boot(
+    servingBreakfast,
+    (url) => (url.includes("/api/status") ? (offline ? OFFLINE : dinner) : null),
+    (w) => { w.KIOSK_FROM_CACHE = true; }
+  );
+
+  await settle();
+  offline = false;
+  window.dispatchEvent(new window.Event("online"));
+  await settle();
+
+  check(
+    "the banner recovers to the real meal as soon as the server answers",
+    bannerText(window) === "Now serving Dinner",
+    `banner read "${bannerText(window)}"`
+  );
+  check(
+    "and the countdown comes back with it",
+    window.document.getElementById("mealBannerCountdown").hidden === false
+  );
+}
+
+async function testAServerErrorIsNotMistakenForAnAnswer() {
+  const { window } = boot(
+    servingBreakfast,
+    () => null,
+    (w) => {
+      w.KIOSK_FROM_CACHE = true;
+      const real = w.fetch;
+      // A 500 from a half-started server: it answers, but not with a schedule.
+      // Counting that as an answer would clear the unknown state and put
+      // "Outside Meal Hours" up with nothing behind it.
+      w.fetch = (url, options) =>
+        String(url).includes("/api/status")
+          ? Promise.resolve({ ok: false, status: 500,
+                              json: () => Promise.reject(new Error("not json")) })
+          : real(url, options);
+    }
+  );
+
+  await settle();
+
+  check(
+    "a 500 from /api/status leaves the schedule unknown rather than 'outside meal hours'",
+    bannerText(window).includes("Offline"),
+    `banner read "${bannerText(window)}"`
+  );
+}
+
+async function testANormallyLoadedPageStillTrustsItsSeed() {
+  const { window } = boot(servingBreakfast, statusIs(null));
+
+  await settle();
+
+  check(
+    "a page served fresh by the server still paints its seeded meal on first render",
+    bannerText(window) === "Now serving Breakfast",
+    `banner read "${bannerText(window)}"`
+  );
+}
+
+async function testTheKioskRunsWithoutServiceWorkerSupport() {
+  /* navigator.serviceWorker does not exist outside a secure context, which is
+   * every browser opened at the kiosk's plain-HTTP address without the flag
+   * run-kiosk.sh passes. Registration has to no-op there rather than throw —
+   * a thrown error at that point kills the rest of kiosk.js's setup, taking
+   * the reader watchdog with it. jsdom has no service worker either, so this
+   * is the real condition and not a simulated one. */
+  const { window } = boot();
+
+  check(
+    "the reader sink still owns the keyboard when there is no service worker",
+    window.document.activeElement === window.document.getElementById("cardInput"),
+    `focus was on ${window.document.activeElement && window.document.activeElement.id}`
+  );
+}
+
+
 await testAReplayTheServerDeclinesIsKeptForStaff();
 await testAReplayThatIsRecordedLeavesNothingBehind();
 await testAScanTooOldToFileCorrectlyIsNeverSent();
@@ -1902,6 +2041,11 @@ await testAGuestMealTakenOfflineIsHostedByTheCard();
 await testAnOnlineGuestMealStillUsesTheMemberId();
 await testARefusedGuestMealDoesNotQueue();
 await testTheOldQueueFormatIsCarriedAcross();
+await testACachedShellDoesNotAnnounceAStaleMeal();
+await testACachedShellRecoversOnceTheServerAnswers();
+await testAServerErrorIsNotMistakenForAnAnswer();
+await testANormallyLoadedPageStillTrustsItsSeed();
+await testTheKioskRunsWithoutServiceWorkerSupport();
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

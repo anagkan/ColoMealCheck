@@ -1297,6 +1297,15 @@
     remaining: CONFIG.secondsRemaining || 0,
     nextName: CONFIG.nextPeriodName || null,
     untilNext: CONFIG.secondsUntilNext || 0,
+    /* Set by the service worker when it served this page from its cache — see
+     * the top of app/static/sw.js. The banner above is seeded from the markup,
+     * and a cached copy of the markup was seeded whenever it happened to be
+     * cached: replayed at dinner, a shell cached at breakfast would announce
+     * "Now serving Breakfast" and count a live clock down under it. Nothing on
+     * the page can date that seed — the countdowns are durations precisely
+     * because the kiosk laptop's own clock is not trusted — so the only honest
+     * move is to admit the schedule is unknown until /api/status answers. */
+    unknown: Boolean(window.KIOSK_FROM_CACHE),
   };
 
   function formatRemaining(totalSeconds) {
@@ -1315,7 +1324,12 @@
     const countdown = el("mealBannerCountdown");
     if (!node) return;
 
-    if (banner.serving && banner.name) {
+    if (banner.unknown) {
+      node.dataset.serving = "false";
+      el("mealBannerName").textContent = "Offline — meal times unavailable";
+      countdown.hidden = true;
+      countdown.textContent = "";
+    } else if (banner.serving && banner.name) {
       node.dataset.serving = "true";
       el("mealBannerName").textContent = `Now serving ${banner.name}`;
       countdown.hidden = false;
@@ -1336,6 +1350,7 @@
   }
 
   function tickBanner() {
+    if (banner.unknown) return;
     if (banner.serving) {
       banner.remaining -= 1;
       if (banner.remaining <= 0) {
@@ -1361,11 +1376,16 @@
   async function refreshService() {
     try {
       const response = await fetch("/api/status");
+      // A 500 parses as neither JSON nor a schedule. Treating it as an answer
+      // would clear `unknown` and put "Outside Meal Hours" on the banner with
+      // nothing behind it.
+      if (!response.ok) throw new Error(`status ${response.status}`);
       const status = await response.json();
       el("serviceLabel").textContent = status.serving
         ? `Serving ${status.period_name} until ${status.period_ends}`
         : "Not currently serving";
 
+      banner.unknown = false;
       banner.serving = Boolean(status.serving);
       banner.name = status.period_name || null;
       banner.remaining = status.seconds_remaining || 0;
@@ -1380,6 +1400,15 @@
   renderBanner();
   setInterval(tickBanner, 1000);
   setInterval(refreshService, 60000);
+  // A minute is a long time to leave a recovered kiosk saying it is offline.
+  window.addEventListener("online", refreshService);
+
+  if (banner.unknown) {
+    // Booted from the cache, so the label rendered into the markup is as stale
+    // as the banner was. Ask now rather than at the next minute boundary.
+    el("serviceLabel").textContent = "Offline — reconnecting";
+    refreshService();
+  }
 
   /* ---------------- PC/SC reader bridge (optional) ----------------
    *
@@ -1447,6 +1476,40 @@
   }
 
   connectBridge();
+
+  /* ---------------- offline boot ----------------
+   *
+   * The queue above keeps a meal safe when the network drops, but only while
+   * this page is already open. Registering the worker is what lets the door
+   * screen *start* with the server away — after a power cut, say, where the
+   * laptop comes back before the server does.
+   *
+   * Guarded rather than assumed, for a reason worth knowing: navigator
+   * .serviceWorker does not exist outside a secure context, and the kiosk is
+   * plain HTTP on the club LAN. run-kiosk.sh passes
+   * --unsafely-treat-insecure-origin-as-secure, which is what makes this
+   * origin count — the same flag the enrollment webcam needs. Open the kiosk
+   * in a browser without it and everything here silently does not happen, so
+   * the console line is the only way to find that out before an outage does.
+   */
+  function registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) {
+      console.warn(
+        "No service worker: this origin is not a secure context, so the kiosk " +
+          "cannot start while the server is unreachable. Launch it with " +
+          "run-kiosk.sh, which passes the flag that fixes this."
+      );
+      return;
+    }
+    navigator.serviceWorker
+      // updateViaCache:"none" keeps the browser from serving sw.js out of its
+      // own HTTP cache, so an updated worker is picked up on the next load
+      // rather than within the next day.
+      .register("/sw.js", { scope: "/", updateViaCache: "none" })
+      .catch((err) => console.warn("Service worker registration failed:", err));
+  }
+
+  registerServiceWorker();
 
   migrateLegacyQueue();
   writeQueue(readQueue());
