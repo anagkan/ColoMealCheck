@@ -25,6 +25,7 @@ from app.models import (
     StaffUser,
 )
 from app.schemas import (
+    AdjacentPeriodOut,
     AlumniMealRequest,
     AlumniSummary,
     EnrollNewRequest,
@@ -117,6 +118,15 @@ def to_response(result: ScanResult, db: Session) -> ScanResponse:
         result_seconds=config.result_screen_seconds,
         submitted_value=result.submitted_value,
         submitted_type=result.submitted_type,
+        offers=[
+            AdjacentPeriodOut(
+                direction=offer.direction,
+                period_name=offer.period.name,
+                service_date=offer.service_date,
+                seconds_away=offer.seconds_away,
+            )
+            for offer in result.offers
+        ],
     )
 
 
@@ -131,14 +141,23 @@ def scan(
     if payload.force:
         actor = authorize_privileged_action(payload.staff_pin, user, "force a second meal")
 
+    moment, stale = _trusted_moment(payload.occurred_at)
     result = process_scan(
         db,
         value=payload.value,
         credential_type=payload.credential_type,
-        moment=_trusted_moment(payload.occurred_at),
+        moment=moment,
         force=payload.force,
         actor=actor,
+        # Unauthorized on purpose, unlike `force` above: a member who is early
+        # for dinner is answering an offer the kiosk made them, and putting a
+        # staff PIN in front of it would mean fetching somebody every time.
+        attach=payload.attach,
     )
+
+    if stale:
+        _note_untrusted_time(db, result, payload.occurred_at, actor)
+
     return to_response(result, db)
 
 
@@ -148,16 +167,57 @@ def scan(
 MAX_REPLAY_AGE_SECONDS = 24 * 60 * 60
 
 
-def _trusted_moment(occurred_at: datetime | None) -> datetime | None:
+def _trusted_moment(occurred_at: datetime | None) -> tuple[datetime | None, bool]:
+    """Decide whether to believe the kiosk's clock.
+
+    Returns the moment to record against — None meaning "use server time" — and
+    whether a time the kiosk did claim was thrown away. The caller needs that
+    second value: substituting server time silently is what let a scan replayed
+    days late land in the wrong meal week with nothing to show for it.
+
+    A scan with no claimed time at all is not stale, just ordinary: the kiosk is
+    online and the server's own clock is the right answer.
+    """
     if occurred_at is None:
-        return None
+        return None, False
     if occurred_at.tzinfo is None:
         occurred_at = occurred_at.replace(tzinfo=timezone.utc)
     now = datetime.now(timezone.utc)
     age = (now - occurred_at).total_seconds()
     if age < -60 or age > MAX_REPLAY_AGE_SECONDS:
-        return None  # fall back to server time
-    return occurred_at
+        return None, True  # fall back to server time, and say so
+    return occurred_at, False
+
+
+def _note_untrusted_time(
+    db: Session, result: ScanResult, claimed_at: datetime, actor: str
+) -> None:
+    """Say out loud that a meal was filed under a different day than it claimed.
+
+    The meal is still recorded — nobody is turned away over a clock — but it has
+    landed on today's service date rather than the one it was eaten on, which
+    moves it into the wrong meal week and spends the wrong allotment. None of
+    that is visible in the row itself, so it goes on the screen for whoever is
+    standing there and into the audit log for whoever is not.
+
+    Shared by all three meal routes: a guest meal and an alumni meal replayed
+    late are misfiled exactly as a check-in is, and it would be a strange kind of
+    honesty to mention it for one and not the others.
+    """
+    result.warnings.append("Scan time was not usable — recorded against today instead.")
+    if result.attendance is None:
+        return
+    audit(
+        db,
+        actor=actor,
+        action="attendance.untrusted_time",
+        entity_type="attendance",
+        entity_id=result.attendance.id,
+        detail={
+            "claimed_at": claimed_at.isoformat(),
+            "recorded_service_date": str(result.service_date),
+        },
+    )
 
 
 @router.post("/guest", response_model=ScanResponse)
@@ -166,9 +226,7 @@ def guest(
     db: Session = Depends(get_db),
     user: StaffUser | None = Depends(current_user),
 ) -> ScanResponse:
-    host = db.get(Member, payload.member_id)
-    if host is None:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not found")
+    host = _resolve_host(db, payload)
 
     # Checked here rather than in the service: this is the one place a person is
     # standing at the popup and can fix what they typed.
@@ -202,6 +260,7 @@ def guest(
             payload.staff_pin, user, "override the guest meal quota"
         )
 
+    moment, stale = _trusted_moment(payload.occurred_at)
     result = record_guest(
         db,
         host=host,
@@ -209,10 +268,45 @@ def guest(
         guest_last_name=last,
         guest_netid=netid,
         guest_netid_reason=netid_reason,
+        moment=moment,
         override_by=override_by,
         override_reason=payload.override_reason,
     )
+    if stale:
+        _note_untrusted_time(db, result, payload.occurred_at, override_by or "kiosk")
     return to_response(result, db)
+
+
+def _resolve_host(db: Session, payload: GuestRequest) -> Member:
+    """Find the member hosting a guest, however the kiosk named them.
+
+    An id is taken at face value — the server handed it out in the first place.
+    A raw card or PUID goes through the same resolver a check-in uses, so an
+    offline guest meal identifies its host by exactly the means a tap does, and
+    a card that turns out not to be enrolled is refused here in the same words
+    it would have been refused at the door.
+    """
+    if payload.member_id is not None:
+        host = db.get(Member, payload.member_id)
+        if host is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Member not found")
+        return host
+
+    if not payload.host_value:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "Choose the member hosting this guest.",
+        )
+
+    host, _ = credential_service.resolve(
+        db, payload.host_value, payload.host_credential_type
+    )
+    if host is None:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            "The host's card is not recognized — see staff to enroll it.",
+        )
+    return host
 
 
 @router.post("/alumni", response_model=ScanResponse)
@@ -269,6 +363,7 @@ def alumni_meal(
             status.HTTP_422_UNPROCESSABLE_ENTITY, netid_service.NETID_FORMAT_HINT
         )
 
+    moment, stale = _trusted_moment(payload.occurred_at)
     result = record_alumni_meal(
         db,
         first_name=first,
@@ -277,7 +372,10 @@ def alumni_meal(
         email=email,
         phone=phone,
         netid=alumni_netid,
+        moment=moment,
     )
+    if stale:
+        _note_untrusted_time(db, result, payload.occurred_at, "kiosk")
     return to_response(result, db)
 
 

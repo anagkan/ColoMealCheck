@@ -48,6 +48,25 @@ a:hover { text-decoration: underline; }
 
 .wrap { max-width: 1180px; margin: 0 auto; padding: 1.75rem 1.5rem 4rem; }
 
+/* ---------- footer ---------- */
+
+.site-foot {
+  display: flex;
+  justify-content: center;
+  padding: 1rem 1.5rem 1.5rem;
+  font-size: 0.85rem;
+}
+/* Body ink rather than the link accent, to match the kiosk's own credit line:
+   this points at the source, it is not part of the navigation. */
+.repo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--ink);
+}
+.repo-link:hover { color: var(--accent); text-decoration: none; }
+.repo-link svg { display: block; }
+
 /* ---------- page furniture ---------- */
 
 .page-head {
@@ -210,7 +229,9 @@ details summary { cursor: pointer; font-weight: 600; margin-bottom: 0.75rem; }
 
 /* ---------- login ---------- */
 
-.centered { display: grid; place-items: center; min-height: 100vh; }
+/* Two rows so the footer below sits at the bottom of the window while the
+   sign-in card stays centred in the space above it. */
+.centered { display: grid; grid-template-rows: 1fr auto; place-items: center; min-height: 100vh; }
 .login { width: 340px; display: flex; flex-direction: column; gap: 0.85rem; }
 .login h1 { margin: 0; font-size: 1.3rem; }
 .login h1 span { color: var(--accent); }

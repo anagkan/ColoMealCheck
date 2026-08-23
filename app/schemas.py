@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,11 @@ class ScanRequest(BaseModel):
     credential_type: str = CredentialType.CSN.value
     force: bool = False
     staff_pin: str | None = None
+    # Which of the two meals either side of now a between-meals check-in is
+    # for — the member's answer to the offer in ScanResponse.offers. A Literal
+    # rather than a plain string so a typo is refused here rather than silently
+    # resolving to no window at all.
+    attach: Literal["previous", "next"] | None = None
     # Set by the kiosk when replaying a scan it queued while the server was
     # unreachable, so a meal eaten at 18:05 is not recorded as 18:40. Live
     # scans send it too; the server ignores anything implausible.
@@ -37,13 +43,25 @@ class GuestRequest(BaseModel):
     isn't one. The route requires exactly one of the two.
     """
 
-    member_id: int
+    # Who is hosting, named either of two ways, because the kiosk does not always
+    # have the same thing to hand. `member_id` is a host the server has already
+    # resolved — the ordinary path, where a card tap came back with a member on
+    # it. `host_value` is a host's card or typed PUID, still unresolved: during
+    # an outage the kiosk queued that tap and never got a member back, so the
+    # credential is all it has. The route accepts either and insists on one.
+    member_id: int | None = None
+    host_value: str = Field(default="", max_length=128)
+    host_credential_type: str = CredentialType.CSN.value
     guest_first_name: str = Field(default="", max_length=80)
     guest_last_name: str = Field(default="", max_length=80)
     guest_netid: str = Field(default="", max_length=32)
     guest_netid_reason: str = Field(default="", max_length=255)
     staff_pin: str | None = None
     override_reason: str | None = Field(default=None, max_length=255)
+    # As on ScanRequest: set when the kiosk is replaying a guest meal it took
+    # while the server was unreachable, so the meal lands in the period it was
+    # eaten in rather than the one it happened to sync during.
+    occurred_at: datetime | None = None
 
 
 class AlumniMealRequest(BaseModel):
@@ -64,6 +82,8 @@ class AlumniMealRequest(BaseModel):
     email: str = Field(default="", max_length=255)
     phone: str = Field(default="", max_length=32)
     netid: str = Field(default="", max_length=32)
+    # As on ScanRequest, for a meal the kiosk took while it was cut off.
+    occurred_at: datetime | None = None
 
 
 class UndoRequest(BaseModel):
@@ -148,6 +168,20 @@ class AlumniSummary(BaseModel):
     netid: str | None
 
 
+class AdjacentPeriodOut(BaseModel):
+    """A meal the kiosk may offer to attach a between-meals check-in to.
+
+    `seconds_away` is a duration rather than a timestamp, for the reason the
+    banner countdown is: the kiosk laptop's own clock is not to be trusted, and
+    "starts in 12 min" survives a wrong one where "starts at 17:45" does not.
+    """
+
+    direction: Literal["previous", "next"]
+    period_name: str
+    service_date: date
+    seconds_away: int
+
+
 class ScanResponse(BaseModel):
     outcome: str
     ok: bool
@@ -167,3 +201,7 @@ class ScanResponse(BaseModel):
     # having to tap again.
     submitted_value: str | None = None
     submitted_type: str | None = None
+    # Only ever populated on outcome="outside_service": the meals the member may
+    # check in against anyway. Empty means there is nothing to offer, so the
+    # kiosk shows no box at all.
+    offers: list[AdjacentPeriodOut] = []

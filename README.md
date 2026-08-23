@@ -199,6 +199,40 @@ fallback, rather than offering a dead button.
 If you later want the app reachable from more than the one laptop, put TLS in
 front of it. Nothing in the app assumes HTTP.
 
+**Always open the kiosk at the same address.** The offline queue below lives in
+browser storage, which is keyed to the exact origin. Reaching the same server by
+IP one day and by hostname the next gives you two separate, empty queues, and
+anything still waiting under the other one will not sync.
+
+### When the network drops
+
+Check-ins, guest meals and alumni meals are all taken offline and replayed when
+the server comes back. Each carries the time it was actually eaten, so a meal
+taken at 18:05 and synced at 18:40 still lands in dinner, in the right meal week.
+Replays are attempted every 20 seconds and whenever the browser regains its
+connection. The queue survives a reload and a browser restart.
+
+Four things are worth knowing before relying on it:
+
+- **The page has to already be open.** There is no offline caching of the page
+  itself, and the kiosk is served by the same app the scans go to — so if the
+  *server* is down and the laptop reboots, the kiosk cannot start at all. This
+  protects against a network blip, not against the server going away.
+- **The result screen goes blind.** The server is what turns a card into a
+  person, so an offline check-in shows "Saved offline" with no name, photo or
+  weekly count. Staff cannot confirm who tapped until it syncs.
+- **A guest meal offline is hosted by a card, not a name.** The member search
+  needs the server, so the host taps their own card and uses **+ Guest** on the
+  result. The card is resolved to a member on replay, exactly as a tap would be.
+- **Twenty-four hours.** Past that the meal can no longer be filed under the
+  right day, so the kiosk stops trying and hands it to staff instead.
+
+Anything that cannot be recorded — an unenrolled card, a guest meal past quota,
+a meal that sat too long — is not discarded. It goes to a red **scans not
+recorded** badge in the kiosk header, listing the card or the name, the time and
+the reason, and stays there until staff clear it. Those need entering by hand
+from the admin screens; the badge is the only sign they exist.
+
 ### Reader setup
 
 The OMNIKEY 5427CK runs in **keyboard wedge** mode. Before opening the app, tap
@@ -241,7 +275,7 @@ Every rule lives in `app/services/scan.py::process_scan`, and the entry method
 | **Past the weekly allotment** | **Recorded anyway**, flagged as an overage, amber band. Never blocked. |
 | Second scan, same meal period | Refused as a duplicate, and the guest popup opens with the member filled in — a second tap almost always means they are signing a guest in. Staff can force a genuine second meal; it's audited. |
 | Membership not `active` | Red banner, meal **still recorded** and flagged. |
-| Outside serving hours | Nothing recorded; the member is still shown. |
+| Outside serving hours | Nothing recorded; the member is still shown — along with a **Check in anyway** box offering the meals either side of now. |
 | **Third guest meal in a month** | **Blocked.** Staff override with a typed reason releases it, into the audit log. |
 | Alumni meal | Recorded against nobody, no quota. Needs a name, a class year and one contact detail. |
 | Unrecognized card | Staff-gated enrollment: create the member, capture a photo, bind the card. |
@@ -279,6 +313,20 @@ Design decisions worth knowing:
   into the daily CSV. This is the only kind of meal whose `member_id` is NULL,
   which is why every per-member report filters on `kind` — see
   `app/models.py::Attendance`.
+- **Being a few minutes early is not a reason to come back later.** With nothing
+  being served, the kiosk names the meal that just closed and the one about to
+  open — "Dinner, starts in 12 min" — and either can be checked into on the
+  spot. It needs no staff PIN, unlike forcing a second meal: arriving early for
+  dinner is not an offence, and the alternative is fetching a member of staff
+  every time somebody beats the doors. Three things keep it honest. The choice
+  is only ever honoured when nothing is open, so it can never move a meal off
+  the window that is actually serving. The meal is booked against *its own*
+  service date, so a 7 am tap that reaches back to last night's dinner lands in
+  the right day and the right meal week. And the row is a plain check-in rather
+  than a staff override, which means the one-meal-per-period guard still holds —
+  check in early and tap again once dinner opens, and the second tap is refused
+  as the duplicate it is. Every one is written to the audit log as
+  `attendance.outside_service`.
 - **The meal week starts Monday.** A Sunday dinner is the last meal of its week;
   Monday breakfast opens a fresh allotment. Nothing rolls over.
 - **Guest quota resets on the 1st** of the calendar month, not on a rolling
@@ -361,7 +409,7 @@ never eaten here is not the most recently seen.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 npm ci                            # jsdom, for the browser JavaScript tests
-.venv/bin/python -m pytest        # 336 tests, ~30s
+.venv/bin/python -m pytest        # 372 tests, ~30s
 ```
 
 Tests run against SQLite, which honours the same partial unique indexes used on
@@ -400,6 +448,14 @@ candidates by clock time rather than `sort_order` — that column is a display
 preference and nothing stops it disagreeing with the timetable. With no active
 windows at all, the banner falls back to **Outside Meal Hours**.
 
+`previous_period` is its mirror image, and feeds the other half of the "check in
+anyway" offer. It searches the same full week backwards, so at 7 am on a Monday
+the meal that just closed is Sunday's dinner rather than nothing. It also keeps
+looking for one day past the first window it finds, because a window that wraps
+midnight closes on the day *after* the day it is listed under: a Friday late
+meal ending at 01:00 closes after a Saturday window that ended at 00:30, so the
+day a window is filed under is not enough to order two of them by.
+
 It also runs `enroll.js` against the rendered `/enroll` page, for a related
 reason: that page submits to two different endpoints depending on its mode.
 Posting a new member to the link-a-card endpoint merely fails, but posting a
@@ -426,7 +482,7 @@ app/
   templates/kiosk/    the door screen
   templates/admin/    the office screens
 bridge/               PC/SC fallback for a reader that cannot type
-tests/                336 tests; start with test_scan_rules.py
+tests/                372 tests; start with test_scan_rules.py
 ```
 
 Schema changes: edit `app/models.py`, then

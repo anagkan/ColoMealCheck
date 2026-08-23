@@ -31,9 +31,15 @@ const AVERY = {
   photo_url: null,
 };
 
-/* `respond(url, body)` may return a payload to answer a request its own way, or
- * anything falsy to fall through to the defaults below. */
-function boot(configOverrides = {}, respond = null) {
+/* Returned from `respond` to make the request fail the way an unreachable
+ * server does — a rejected fetch, no status — rather than answer at all. */
+const OFFLINE = Symbol("offline");
+
+/* `respond(url, body)` may return a payload to answer a request its own way,
+ * OFFLINE to fail it, or anything falsy to fall through to the defaults below.
+ * `beforeEval(window)` runs after the page exists but before kiosk.js does, for
+ * tests that need localStorage already populated or already broken. */
+function boot(configOverrides = {}, respond = null, beforeEval = null) {
   const dom = new JSDOM(html, { runScripts: "outside-only", url: "http://kiosk.test/" });
   const { window } = dom;
 
@@ -44,11 +50,15 @@ function boot(configOverrides = {}, respond = null) {
   window.fetch = (url, options = {}) => {
     const body = options.body ? JSON.parse(options.body) : null;
     calls.push({ url, body });
+    const answered = respond ? respond(String(url), body) : null;
+    if (answered === OFFLINE) {
+      return Promise.reject(new TypeError("Failed to fetch"));
+    }
     // Every card value is unknown; every PUID resolves. That asymmetry is what
     // makes a mis-routed submit obvious.
     const isScan = String(url).includes("/api/scan");
     const payload =
-      (respond && respond(String(url), body)) ||
+      answered ||
       (String(url).includes("/api/members/search")
         ? [AVERY]
         : isScan && body && body.credential_type === "manual_puid"
@@ -68,6 +78,7 @@ function boot(configOverrides = {}, respond = null) {
     });
   };
 
+  if (beforeEval) beforeEval(window);
   window.eval(source);
   return { window, calls, dom };
 }
@@ -90,6 +101,37 @@ const alumniRecorded = (url) =>
                   email: "casey@example.com", phone: null, netid: null },
         period_name: "Dinner", attendance_id: 11, result_seconds: 6 }
     : null;
+
+/* A card tapped between meals: refused, but with the windows either side named
+ * so the kiosk can offer them. The second scan — the one carrying the member's
+ * choice — comes back as an ordinary check-in, which is exactly what the server
+ * does once a meal has been attached. */
+function betweenMeals(offers = null) {
+  const named = offers || [
+    { direction: "previous", period_name: "Lunch", service_date: "2026-01-05",
+      seconds_away: 1500 },
+    { direction: "next", period_name: "Dinner", service_date: "2026-01-05",
+      seconds_away: 900 },
+  ];
+  return (url, body) => {
+    if (!url.includes("/api/scan")) return null;
+    if (body && body.attach) {
+      return { outcome: "checked_in", ok: true,
+               message: "Checked in — 1 of 19 this week.",
+               warnings: ["Checked in before Dinner opened"], member: AVERY,
+               period_name: "Dinner",
+               weekly: { used: 1, allotment: 19, remaining: 18, is_over: false },
+               guests: { used: 0, quota: 2, remaining: 2 }, offers: [],
+               attendance_id: 12, result_seconds: 6 };
+    }
+    return { outcome: "outside_service", ok: false,
+             message: "No meal is being served right now.", warnings: [],
+             member: AVERY,
+             weekly: { used: 0, allotment: 19, remaining: 19, is_over: false },
+             guests: { used: 0, quota: 2, remaining: 2 },
+             offers: named, result_seconds: 6 };
+  };
+}
 
 const guestRecorded = (url) =>
   url.includes("/api/guest")
@@ -462,13 +504,151 @@ async function testMealBannerAsksTheServerWhenTheWindowCloses() {
   dom.window.close();
 }
 
-/* ---------------- guest meal popup ---------------- */
-
 function click(window, id) {
   window.document
     .getElementById(id)
     .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 }
+
+/* ---------------- check in anyway ----------------
+ *
+ * A member five minutes early for dinner should be able to eat rather than be
+ * sent away to come back. The kiosk offers the meals either side of now, and
+ * picking one re-submits the scan the server has already refused — so the
+ * button has to carry the original card value, which nobody should have to tap
+ * a second time. */
+
+async function testBetweenMealsBothNeighbouringMealsAreOffered() {
+  const { window, dom } = boot({}, betweenMeals());
+  const doc = window.document;
+
+  check("the offer starts hidden", doc.getElementById("anywayBox").hidden === true);
+
+  typeAll(window, "A1B2C3D4");
+  typeKey(window, "Enter");
+  await settle();
+
+  check("a tap between meals still says nothing is being served",
+        doc.getElementById("resultMessage").textContent ===
+          "No meal is being served right now.",
+        `band read ${JSON.stringify(doc.getElementById("resultMessage").textContent)}`);
+  check("and offers the way out underneath it",
+        doc.getElementById("anywayBox").hidden === false);
+
+  const prev = doc.getElementById("anywayPrev");
+  const next = doc.getElementById("anywayNext");
+  check("both meals are named, one per button",
+        prev.hidden === false && next.hidden === false &&
+          prev.querySelector(".anyway-meal").textContent === "Lunch" &&
+          next.querySelector(".anyway-meal").textContent === "Dinner",
+        `prev=${prev.textContent} next=${next.textContent}`);
+  check("with how far away each one is, in words rather than a clock face",
+        prev.querySelector(".anyway-when").textContent === "ended 25 min ago" &&
+          next.querySelector(".anyway-when").textContent === "starts in 15 min",
+        `prev=${JSON.stringify(prev.querySelector(".anyway-when").textContent)} ` +
+          `next=${JSON.stringify(next.querySelector(".anyway-when").textContent)}`);
+
+  dom.window.close();
+}
+
+async function testPickingAMealResubmitsTheSameCard() {
+  const { window, calls, dom } = boot({}, betweenMeals());
+  const doc = window.document;
+
+  typeAll(window, "A1B2C3D4");
+  typeKey(window, "Enter");
+  await settle();
+
+  click(window, "anywayNext");
+  await settle();
+
+  const scans = calls.filter((c) => String(c.url).includes("/api/scan"));
+  check("picking a meal sends a second scan", scans.length === 2,
+        `got ${scans.length}`);
+  check("carrying the same card, so nobody taps twice",
+        scans.length === 2 && scans[1].body.value === "A1B2C3D4" &&
+          scans[1].body.credential_type === "csn",
+        scans.length === 2 ? JSON.stringify(scans[1].body) : "no second scan");
+  check("and the meal that was picked",
+        scans.length === 2 && scans[1].body.attach === "next",
+        scans.length === 2 ? `attach was ${scans[1].body.attach}` : "no second scan");
+  check("the first scan asked for no meal at all",
+        scans.length >= 1 && scans[0].body.attach === undefined,
+        scans.length ? JSON.stringify(scans[0].body) : "no scan");
+  check("the confirmation replaces the offer rather than sitting under it",
+        doc.getElementById("anywayBox").hidden === true &&
+          doc.getElementById("resultMessage").textContent ===
+            "Checked in — 1 of 19 this week.",
+        `band read ${JSON.stringify(doc.getElementById("resultMessage").textContent)}`);
+  check("and says which meal was spent, which the screen cannot otherwise show",
+        doc.getElementById("resultWarnings").textContent ===
+          "Checked in before Dinner opened",
+        `warnings read ${JSON.stringify(doc.getElementById("resultWarnings").textContent)}`);
+
+  dom.window.close();
+}
+
+/* A club with nothing scheduled on one side gets one button, not one naming a
+ * meal that does not exist. */
+async function testOnlyTheMealsTheServerOffersGetButtons() {
+  const { window, dom } = boot({}, betweenMeals([
+    { direction: "next", period_name: "Breakfast", service_date: "2026-01-06",
+      seconds_away: 45015 },
+  ]));
+  const doc = window.document;
+
+  typeAll(window, "A1B2C3D4");
+  typeKey(window, "Enter");
+  await settle();
+
+  check("the offered meal gets its button",
+        doc.getElementById("anywayNext").hidden === false &&
+          doc.getElementById("anywayNext").querySelector(".anyway-meal").textContent ===
+            "Breakfast");
+  check("the meal that was not offered gets none",
+        doc.getElementById("anywayPrev").hidden === true);
+  check("and a wait of half a day reads in hours",
+        doc.getElementById("anywayNext").querySelector(".anyway-when").textContent ===
+          "starts in 12 hr 30 min",
+        `read ${JSON.stringify(doc.getElementById("anywayNext")
+          .querySelector(".anyway-when").textContent)}`);
+
+  dom.window.close();
+}
+
+async function testAnUnrecognizedCardIsOfferedNothing() {
+  const { window, dom } = boot();  // every card comes back unknown
+  const doc = window.document;
+
+  typeAll(window, "A1B2C3D4");
+  typeKey(window, "Enter");
+  await settle();
+
+  check("a card the club does not know is offered no meal to check into",
+        doc.getElementById("anywayBox").hidden === true);
+
+  dom.window.close();
+}
+
+/* Six seconds is not long enough to read two buttons and decide, and the screen
+ * vanishing mid-decision is the trip back to the kiosk this feature exists to
+ * save. */
+async function testTheOfferOutlivesTheUsualResultTimeout() {
+  const { window, dom } = boot({ resultSeconds: 1 }, betweenMeals());
+  const doc = window.document;
+
+  typeAll(window, "A1B2C3D4");
+  typeKey(window, "Enter");
+  await new Promise((resolve) => setTimeout(resolve, 1400));
+
+  check("the offer is still on screen after the usual timeout",
+        doc.getElementById("anywayBox").hidden === false &&
+          doc.getElementById("result").hidden === false);
+
+  dom.window.close();
+}
+
+/* ---------------- guest meal popup ---------------- */
 
 async function testGuestButtonOpensThePopupAsksWhoIsHosting() {
   const { window, dom } = boot();
@@ -1114,6 +1294,11 @@ await testTheNoCardButtonIsGone();
 await testUnknownCardOffersTheEnrollmentPage();
 await testCardStillWorksOnIdle();
 await testStrayDigitsDoNotLeakIntoTheNextScan();
+await testBetweenMealsBothNeighbouringMealsAreOffered();
+await testPickingAMealResubmitsTheSameCard();
+await testOnlyTheMealsTheServerOffersGetButtons();
+await testAnUnrecognizedCardIsOfferedNothing();
+await testTheOfferOutlivesTheUsualResultTimeout();
 await testGuestButtonOpensThePopupAsksWhoIsHosting();
 await testTheHostCanBeSearchedForByName();
 await testSecondTapInAPeriodOpensThePopupPrefilled();
@@ -1135,6 +1320,588 @@ await testTheClassYearBoxTakesFourDigitsAndNothingElse();
 await testTheAlumniPopupHoldsTheKeyboard();
 await testCancellingTheAlumniPopupLeavesNothingBehind();
 await testTheTwoPopupsAreAlternatives();
+
+/* ---------------- the offline queue ----------------
+ *
+ * The queue is the only part of the kiosk that runs without the server
+ * watching, so anything it gets wrong is invisible by construction. What these
+ * pin down is the one rule that makes it safe: a scan leaves the queue when a
+ * row exists for it, and never on any weaker evidence. */
+
+const QUEUE_KEY = "colomeal.queue.v2";
+const LEGACY_QUEUE_KEY = "colomeal.queue.v1";
+const UNRECORDED_KEY = "colomeal.unrecorded.v1";
+
+/* A queue entry as kiosk.js stores one: where it was going, what it was, and
+ * what to call it if it ends up in front of staff. */
+const queued = (path, body, label) => ({ path: path, body: body, label: label });
+
+const scanBody = (value, at, type = "csn") => ({
+  value: value,
+  credential_type: type,
+  occurred_at: at,
+});
+
+const stored = (window, key) => JSON.parse(window.localStorage.getItem(key) || "[]");
+
+async function tapCard(window, value) {
+  window.document.getElementById("cardInput").focus();
+  typeAll(window, value);
+  typeKey(window, "Enter");
+  await settle();
+}
+
+/* A 200 is not a receipt. unknown_credential, outside_service and
+ * guest_quota_exceeded are all answered 200 with no row written, and the queue
+ * used to treat "the server replied" as "the meal was recorded" — so a card
+ * tapped during an outage that turned out not to be enrolled was dropped on the
+ * floor with nothing left behind at all. */
+async function testAReplayTheServerDeclinesIsKeptForStaff() {
+  let offline = true;
+  const { window } = boot({}, (url) =>
+    offline && url.includes("/api/scan") ? OFFLINE : null
+  );
+
+  await tapCard(window, "04A1B2C3D4E5F601");
+
+  check(
+    "a scan taken while the server is unreachable is queued",
+    stored(window, QUEUE_KEY).length === 1,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+
+  // The server comes back — and refuses the card, with a 200 and no row.
+  offline = false;
+  window.dispatchEvent(new window.Event("online"));
+  await settle();
+
+  check(
+    "a declined replay does not stay in the queue retrying forever",
+    stored(window, QUEUE_KEY).length === 0,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+
+  const unrecorded = stored(window, UNRECORDED_KEY);
+  check(
+    "a declined replay is kept as a meal that was never recorded",
+    unrecorded.length === 1,
+    `unrecorded held ${JSON.stringify(unrecorded)}`
+  );
+  check(
+    "the kept scan carries the card value staff need to act on it",
+    unrecorded.length === 1 && /04A1B2C3D4E5F601/.test(unrecorded[0].label || ""),
+    `label was ${unrecorded.length ? JSON.stringify(unrecorded[0].label) : "absent"}`
+  );
+  check(
+    "the kept scan says why the server would not take it",
+    unrecorded.length === 1 && /not recognized/i.test(unrecorded[0].reason || ""),
+    `reason was ${unrecorded.length ? JSON.stringify(unrecorded[0].reason) : "absent"}`
+  );
+
+  const badge = window.document.getElementById("unrecordedBadge");
+  check(
+    "the badge shows staff there is something to deal with",
+    badge.hidden === false && /1 scan/.test(badge.textContent),
+    `badge hidden=${badge.hidden} text=${JSON.stringify(badge.textContent)}`
+  );
+}
+
+/* The mirror image: a replay that really was recorded leaves nothing behind.
+ * Without this the fix above would just be a different way to cry wolf. */
+async function testAReplayThatIsRecordedLeavesNothingBehind() {
+  let offline = true;
+  const { window } = boot({}, (url) =>
+    offline && url.includes("/api/scan") ? OFFLINE : null
+  );
+
+  // A typed PUID, which the harness's server answers with a real attendance_id.
+  window.document.getElementById("manualInput").focus();
+  typeAll(window, "905550001");
+  typeKey(window, "Enter");
+  await settle();
+
+  check(
+    "the typed ID is queued while the server is unreachable",
+    stored(window, QUEUE_KEY).length === 1,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+
+  offline = false;
+  window.dispatchEvent(new window.Event("online"));
+  await settle();
+
+  check(
+    "a replay that gets a row leaves the queue",
+    stored(window, QUEUE_KEY).length === 0,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+  check(
+    "a replay that gets a row is not reported as unrecorded",
+    stored(window, UNRECORDED_KEY).length === 0,
+    `unrecorded held ${JSON.stringify(stored(window, UNRECORDED_KEY))}`
+  );
+  check(
+    "the badge stays hidden when nothing was missed",
+    window.document.getElementById("unrecordedBadge").hidden === true,
+    "badge was visible"
+  );
+}
+
+/* A laptop closed on Friday night and reopened on Monday would replay Friday's
+ * dinner, the server would refuse to believe a timestamp that old and file it
+ * under Monday instead — wrong service date, wrong meal week, wrong allotment,
+ * and no sign anything had happened. The kiosk holds the same 24h rule so it
+ * stops sending them. */
+async function testAScanTooOldToFileCorrectlyIsNeverSent() {
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+  const { window, calls } = boot({}, null, (w) => {
+    w.localStorage.setItem(
+      QUEUE_KEY,
+      JSON.stringify([
+        queued("/api/scan", scanBody("04A1B2C3D4E5F601", threeDaysAgo), "Card 04A1B2C3D4E5F601"),
+      ])
+    );
+  });
+  await settle();
+
+  check(
+    "a scan older than the replay window is never sent",
+    calls.filter((c) => String(c.url).includes("/api/scan")).length === 0,
+    `sent ${JSON.stringify(calls.map((c) => c.url))}`
+  );
+  check(
+    "it leaves the queue rather than being retried forever",
+    stored(window, QUEUE_KEY).length === 0,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+
+  const unrecorded = stored(window, UNRECORDED_KEY);
+  check(
+    "it is reported as a meal that needs entering by hand",
+    unrecorded.length === 1 && /too old/i.test(unrecorded[0].reason || ""),
+    `unrecorded held ${JSON.stringify(unrecorded)}`
+  );
+}
+
+/* A scan still inside the window is exactly what the queue is for, so the age
+ * check must not swallow ordinary replays. */
+async function testARecentQueuedScanIsStillReplayed() {
+  const anHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { calls } = boot({}, null, (w) => {
+    w.localStorage.setItem(
+      QUEUE_KEY,
+      JSON.stringify([
+        queued(
+          "/api/scan",
+          scanBody("905550001", anHourAgo, "manual_puid"),
+          "ID 905550001"
+        ),
+      ])
+    );
+  });
+  await settle();
+
+  const scans = calls.filter((c) => String(c.url).includes("/api/scan"));
+  check(
+    "an hour-old queued scan is replayed normally",
+    scans.length === 1 && scans[0].body.occurred_at === anHourAgo,
+    `sent ${JSON.stringify(scans.map((s) => s.body))}`
+  );
+}
+
+/* localStorage throws in a private-browsing window and when the disk is full.
+ * The throw came out of enqueue(), escaped submitScan's own catch and left the
+ * member looking at the previous screen — no answer, from the one code path
+ * whose whole job is to answer when the server cannot. */
+async function testAFullDiskStillAnswersTheMember() {
+  const breakStorage = (w) => {
+    // Assigning to the Storage instance does not take under jsdom — the
+    // prototype is what the page actually calls through.
+    Object.getPrototypeOf(w.localStorage).setItem = () => {
+      throw new Error("QuotaExceededError");
+    };
+  };
+
+  // The first write happens during setup, so an unguarded one does not merely
+  // break the queue — it throws out of kiosk.js as it loads and takes the whole
+  // kiosk with it, reader and all.
+  let booted;
+  try {
+    booted = boot({}, (url) => (url.includes("/api/scan") ? OFFLINE : null), breakStorage);
+  } catch (err) {
+    check("a kiosk that cannot write to disk still starts up", false, String(err));
+    return;
+  }
+  check("a kiosk that cannot write to disk still starts up", true);
+
+  const { window } = booted;
+  await tapCard(window, "04A1B2C3D4E5F601");
+
+  const doc = window.document;
+  check(
+    "a kiosk that cannot write to disk still shows the member a result",
+    doc.getElementById("result").hidden === false,
+    "the result screen never appeared"
+  );
+  check(
+    "and still tells them the meal was taken offline",
+    /saved offline/i.test(doc.getElementById("resultName").textContent),
+    `name read ${JSON.stringify(doc.getElementById("resultName").textContent)}`
+  );
+}
+
+/* Three things start a flush — the 20s timer, the online event and every
+ * successful scan — so two really can overlap. Both would read the same queue,
+ * send everything twice, and the slower one would write back a `remaining` that
+ * resurrected what the faster had just cleared. */
+async function testOverlappingFlushesDoNotSendTheSameScanTwice() {
+  const anHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+  const { window, calls } = boot({}, null, (w) => {
+    w.localStorage.setItem(
+      QUEUE_KEY,
+      JSON.stringify([
+        queued(
+          "/api/scan",
+          scanBody("905550001", anHourAgo, "manual_puid"),
+          "ID 905550001"
+        ),
+      ])
+    );
+  });
+
+  // Fire a second and third flush while the first is still in flight.
+  window.dispatchEvent(new window.Event("online"));
+  window.dispatchEvent(new window.Event("online"));
+  await settle();
+
+  check(
+    "a queued scan is sent once however many flushes race",
+    calls.filter((c) => String(c.url).includes("/api/scan")).length === 1,
+    `sent ${calls.filter((c) => String(c.url).includes("/api/scan")).length}`
+  );
+  check(
+    "and the queue is left empty, not resurrected by the slower flush",
+    stored(window, QUEUE_KEY).length === 0,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+}
+
+/* The badge is only useful if it leads somewhere, and the panel it opens has to
+ * obey the same keyboard rule the other two popups do — a card tapped while
+ * staff are reading it must not submit underneath them. */
+async function testTheUnrecordedPanelOpensAndHoldsTheKeyboard() {
+  let offline = true;
+  const { window, calls } = boot({}, (url) =>
+    offline && url.includes("/api/scan") ? OFFLINE : null
+  );
+  const doc = window.document;
+
+  await tapCard(window, "04A1B2C3D4E5F601");
+  offline = false;
+  window.dispatchEvent(new window.Event("online"));
+  await settle();
+
+  doc.getElementById("unrecordedBadge").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await settle();
+
+  check(
+    "clicking the badge opens the panel",
+    doc.getElementById("unrecordedModal").hidden === false,
+    "the panel stayed hidden"
+  );
+  check(
+    "the panel lists the scan that was missed",
+    /04A1B2C3D4E5F601/.test(doc.getElementById("unrecordedList").textContent),
+    `list read ${JSON.stringify(doc.getElementById("unrecordedList").textContent)}`
+  );
+  check(
+    "the reader does not hold the keyboard while the panel is open",
+    doc.activeElement !== doc.getElementById("cardInput"),
+    "the hidden reader sink still had focus"
+  );
+
+  const before = calls.filter((c) => String(c.url).includes("/api/scan")).length;
+  typeAll(window, "04A1B2C3D4E5F602");
+  typeKey(window, "Enter");
+  await settle();
+  check(
+    "a card tapped while the panel is open does not submit underneath it",
+    calls.filter((c) => String(c.url).includes("/api/scan")).length === before,
+    "a scan was submitted from behind the panel"
+  );
+
+  // Clearing is the only way out of the badge, so it has to actually work.
+  doc
+    .querySelector('#unrecordedModal [data-action="clear"]')
+    .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  await settle();
+
+  check(
+    "clearing the list puts the badge away",
+    doc.getElementById("unrecordedBadge").hidden === true &&
+      stored(window, UNRECORDED_KEY).length === 0,
+    `badge hidden=${doc.getElementById("unrecordedBadge").hidden}`
+  );
+  check(
+    "and hands the keyboard back to the reader",
+    doc.activeElement === doc.getElementById("cardInput"),
+    `activeElement was ${doc.activeElement && doc.activeElement.id}`
+  );
+}
+
+/* An alumni meal is the one that most needs queuing: it is on nobody's account
+ * and leaves no card behind, so an alum turned away during an outage is a meal
+ * no later reconciliation could reconstruct. */
+async function testAnAlumniMealTakenOfflineIsQueued() {
+  let offline = true;
+  const { window, calls } = boot({}, (url) =>
+    offline && url.includes("/api/alumni") ? OFFLINE : null
+  );
+  const doc = window.document;
+
+  doc.getElementById("alumniMealBtn").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await settle();
+  doc.getElementById("alumniFirstName").value = "Casey";
+  doc.getElementById("alumniLastName").value = "Whitman";
+  doc.getElementById("alumniClassYear").value = "2014";
+  doc.getElementById("alumniEmail").value = "casey@example.com";
+  doc.getElementById("alumniSubmit").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await settle();
+
+  const items = stored(window, QUEUE_KEY);
+  check(
+    "an alumni meal taken while the server is unreachable is queued",
+    items.length === 1 && items[0].path === "/api/alumni",
+    `queue held ${JSON.stringify(items)}`
+  );
+  check(
+    "it carries the whole alum, not just a name",
+    items.length === 1 &&
+      items[0].body.class_year === 2014 &&
+      items[0].body.email === "casey@example.com",
+    `body was ${items.length ? JSON.stringify(items[0].body) : "absent"}`
+  );
+  check(
+    "it stamps the time it was actually eaten",
+    items.length === 1 && typeof items[0].body.occurred_at === "string",
+    `occurred_at was ${items.length ? JSON.stringify(items[0].body.occurred_at) : "absent"}`
+  );
+  check(
+    "the popup closes and says the meal was taken",
+    doc.getElementById("alumniModal").hidden === true &&
+      /alumni meal saved offline/i.test(doc.getElementById("resultName").textContent),
+    `name read ${JSON.stringify(doc.getElementById("resultName").textContent)}`
+  );
+
+  offline = false;
+  window.dispatchEvent(new window.Event("online"));
+  await settle();
+
+  const replayed = calls.filter((c) => String(c.url).includes("/api/alumni"));
+  check(
+    "and it is replayed to the alumni endpoint on reconnect",
+    replayed.length === 2 && replayed[1].body.first_name === "Casey",
+    `alumni calls: ${JSON.stringify(replayed.map((c) => c.body && c.body.first_name))}`
+  );
+  check(
+    "leaving the queue empty",
+    stored(window, QUEUE_KEY).length === 0,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+}
+
+/* A guest meal offline has a problem an alumni meal does not: the host. The
+ * member search needs the server, and the host's own tap was queued rather than
+ * answered, so there is no member_id to be had. The card is what stands in. */
+async function testAGuestMealTakenOfflineIsHostedByTheCard() {
+  let offline = true;
+  const { window, calls } = boot({}, (url) => (offline ? OFFLINE : null));
+  const doc = window.document;
+
+  // The host taps their own card — queued, so no member ever comes back.
+  await tapCard(window, "04A1B2C3D4E5F601");
+
+  check(
+    "the offline result still offers the guest button",
+    doc.getElementById("guestBtn").hidden === false,
+    "there was no way to sign a guest in"
+  );
+
+  doc.getElementById("guestBtn").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await settle();
+
+  check(
+    "the popup opens with the tapped card standing in for the host",
+    doc.getElementById("guestHostChosen").hidden === false &&
+      /04A1B2C3D4E5F601/.test(doc.getElementById("guestHostPuid").textContent),
+    `host read ${JSON.stringify(doc.getElementById("guestHostPuid").textContent)}`
+  );
+
+  doc.getElementById("guestFirstName").value = "Robin";
+  doc.getElementById("guestLastName").value = "Ellis";
+  doc.getElementById("guestNetid").value = "re1234";
+  doc.getElementById("guestSubmit").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await settle();
+
+  const guests = stored(window, QUEUE_KEY).filter((i) => i.path === "/api/guest");
+  check(
+    "the guest meal is queued",
+    guests.length === 1,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+  check(
+    "hosted by the card rather than by a member id it never learned",
+    guests.length === 1 &&
+      guests[0].body.host_value === "04A1B2C3D4E5F601" &&
+      guests[0].body.member_id === undefined,
+    `body was ${guests.length ? JSON.stringify(guests[0].body) : "absent"}`
+  );
+  check(
+    "and carries the guest's own details",
+    guests.length === 1 &&
+      guests[0].body.guest_first_name === "Robin" &&
+      guests[0].body.guest_netid === "re1234",
+    `body was ${guests.length ? JSON.stringify(guests[0].body) : "absent"}`
+  );
+
+  offline = false;
+  window.dispatchEvent(new window.Event("online"));
+  await settle();
+
+  check(
+    "both the check-in and the guest meal replay on reconnect",
+    calls.filter((c) => String(c.url).includes("/api/guest")).length === 2 &&
+      calls.filter((c) => String(c.url).includes("/api/scan")).length === 2,
+    `scan=${calls.filter((c) => String(c.url).includes("/api/scan")).length} ` +
+      `guest=${calls.filter((c) => String(c.url).includes("/api/guest")).length}`
+  );
+}
+
+/* Online, the host is a resolved member and must stay one — the card path is a
+ * fallback, not a replacement. */
+async function testAnOnlineGuestMealStillUsesTheMemberId() {
+  const { window, calls } = boot({}, (url, body) => alreadyCheckedIn(url) || guestRecorded(url));
+  const doc = window.document;
+
+  await tapCard(window, "04A1B2C3D4E5F601");
+  // The second tap in a period opens the popup with the host filled in.
+  doc.getElementById("guestFirstName").value = "Robin";
+  doc.getElementById("guestLastName").value = "Ellis";
+  doc.getElementById("guestNetid").value = "re1234";
+  doc.getElementById("guestSubmit").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await settle();
+
+  const posted = calls.filter((c) => String(c.url).includes("/api/guest"));
+  check(
+    "an online guest meal identifies the host by member id",
+    posted.length === 1 && posted[0].body.member_id === AVERY.id,
+    `body was ${posted.length ? JSON.stringify(posted[0].body) : "absent"}`
+  );
+  check(
+    "and does not also send a card for the server to second-guess it with",
+    posted.length === 1 && posted[0].body.host_value === undefined,
+    `body was ${posted.length ? JSON.stringify(posted[0].body) : "absent"}`
+  );
+  check(
+    "nothing is queued when the server is answering",
+    stored(window, QUEUE_KEY).length === 0,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+}
+
+/* A guest or alumni meal the server refuses outright must stay in the popup, not
+ * queue — the person is still standing there and can fix what they typed. */
+async function testARefusedGuestMealDoesNotQueue() {
+  const { window } = boot({}, (url) => {
+    if (!url.includes("/api/guest")) return alreadyCheckedIn(url);
+    return null;
+  });
+  const doc = window.document;
+
+  // Answer /api/guest with a refusal rather than a rejection.
+  const realFetch = window.fetch;
+  window.fetch = (url, options) => {
+    if (String(url).includes("/api/guest")) {
+      return Promise.resolve({
+        ok: false,
+        status: 422,
+        json: () => Promise.resolve({ detail: "Enter the guest's Princeton NetID." }),
+      });
+    }
+    return realFetch(url, options);
+  };
+
+  await tapCard(window, "04A1B2C3D4E5F601");
+  doc.getElementById("guestFirstName").value = "Robin";
+  doc.getElementById("guestLastName").value = "Ellis";
+  doc.getElementById("guestNetid").value = "re1234";
+  doc.getElementById("guestSubmit").dispatchEvent(
+    new window.MouseEvent("click", { bubbles: true })
+  );
+  await settle();
+
+  check(
+    "a refused guest meal is not queued behind the staff's back",
+    stored(window, QUEUE_KEY).length === 0,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+  check(
+    "the popup stays open with the reason on it",
+    doc.getElementById("guestModal").hidden === false &&
+      /NetID/.test(doc.getElementById("guestError").textContent),
+    `error read ${JSON.stringify(doc.getElementById("guestError").textContent)}`
+  );
+}
+
+/* A kiosk updated in the middle of an outage must not throw away what the
+ * previous version had already queued. */
+async function testTheOldQueueFormatIsCarriedAcross() {
+  const justNow = new Date().toISOString();
+  const { window, calls } = boot({}, null, (w) => {
+    w.localStorage.setItem(
+      LEGACY_QUEUE_KEY,
+      JSON.stringify([scanBody("905550001", justNow, "manual_puid")])
+    );
+  });
+  await settle();
+
+  const scans = calls.filter((c) => String(c.url).includes("/api/scan"));
+  check(
+    "a scan queued by the previous version is still replayed",
+    scans.length === 1 && scans[0].body.value === "905550001",
+    `sent ${JSON.stringify(scans.map((s) => s.body))}`
+  );
+  check(
+    "and the old key is emptied rather than replayed again next time",
+    stored(window, LEGACY_QUEUE_KEY).length === 0,
+    `legacy held ${JSON.stringify(stored(window, LEGACY_QUEUE_KEY))}`
+  );
+}
+
+await testAReplayTheServerDeclinesIsKeptForStaff();
+await testAReplayThatIsRecordedLeavesNothingBehind();
+await testAScanTooOldToFileCorrectlyIsNeverSent();
+await testARecentQueuedScanIsStillReplayed();
+await testAFullDiskStillAnswersTheMember();
+await testOverlappingFlushesDoNotSendTheSameScanTwice();
+await testTheUnrecordedPanelOpensAndHoldsTheKeyboard();
+await testAnAlumniMealTakenOfflineIsQueued();
+await testAGuestMealTakenOfflineIsHostedByTheCard();
+await testAnOnlineGuestMealStillUsesTheMemberId();
+await testARefusedGuestMealDoesNotQueue();
+await testTheOldQueueFormatIsCarriedAcross();
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);
