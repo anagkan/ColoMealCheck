@@ -25,6 +25,7 @@ from app.models import (
     StaffUser,
 )
 from app.schemas import (
+    AdjacentPeriodOut,
     AlumniMealRequest,
     AlumniSummary,
     EnrollNewRequest,
@@ -117,6 +118,15 @@ def to_response(result: ScanResult, db: Session) -> ScanResponse:
         result_seconds=config.result_screen_seconds,
         submitted_value=result.submitted_value,
         submitted_type=result.submitted_type,
+        offers=[
+            AdjacentPeriodOut(
+                direction=offer.direction,
+                period_name=offer.period.name,
+                service_date=offer.service_date,
+                seconds_away=offer.seconds_away,
+            )
+            for offer in result.offers
+        ],
     )
 
 
@@ -138,6 +148,10 @@ def scan(
         moment=_trusted_moment(payload.occurred_at),
         force=payload.force,
         actor=actor,
+        # Unauthorized on purpose, unlike `force` above: a member who is early
+        # for dinner is answering an offer the kiosk made them, and putting a
+        # staff PIN in front of it would mean fetching somebody every time.
+        attach=payload.attach,
     )
     return to_response(result, db)
 

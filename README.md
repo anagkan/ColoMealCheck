@@ -241,7 +241,7 @@ Every rule lives in `app/services/scan.py::process_scan`, and the entry method
 | **Past the weekly allotment** | **Recorded anyway**, flagged as an overage, amber band. Never blocked. |
 | Second scan, same meal period | Refused as a duplicate, and the guest popup opens with the member filled in — a second tap almost always means they are signing a guest in. Staff can force a genuine second meal; it's audited. |
 | Membership not `active` | Red banner, meal **still recorded** and flagged. |
-| Outside serving hours | Nothing recorded; the member is still shown. |
+| Outside serving hours | Nothing recorded; the member is still shown — along with a **Check in anyway** box offering the meals either side of now. |
 | **Third guest meal in a month** | **Blocked.** Staff override with a typed reason releases it, into the audit log. |
 | Alumni meal | Recorded against nobody, no quota. Needs a name, a class year and one contact detail. |
 | Unrecognized card | Staff-gated enrollment: create the member, capture a photo, bind the card. |
@@ -279,6 +279,20 @@ Design decisions worth knowing:
   into the daily CSV. This is the only kind of meal whose `member_id` is NULL,
   which is why every per-member report filters on `kind` — see
   `app/models.py::Attendance`.
+- **Being a few minutes early is not a reason to come back later.** With nothing
+  being served, the kiosk names the meal that just closed and the one about to
+  open — "Dinner, starts in 12 min" — and either can be checked into on the
+  spot. It needs no staff PIN, unlike forcing a second meal: arriving early for
+  dinner is not an offence, and the alternative is fetching a member of staff
+  every time somebody beats the doors. Three things keep it honest. The choice
+  is only ever honoured when nothing is open, so it can never move a meal off
+  the window that is actually serving. The meal is booked against *its own*
+  service date, so a 7 am tap that reaches back to last night's dinner lands in
+  the right day and the right meal week. And the row is a plain check-in rather
+  than a staff override, which means the one-meal-per-period guard still holds —
+  check in early and tap again once dinner opens, and the second tap is refused
+  as the duplicate it is. Every one is written to the audit log as
+  `attendance.outside_service`.
 - **The meal week starts Monday.** A Sunday dinner is the last meal of its week;
   Monday breakfast opens a fresh allotment. Nothing rolls over.
 - **Guest quota resets on the 1st** of the calendar month, not on a rolling
@@ -399,6 +413,14 @@ names Monday breakfast rather than the following weekend's brunch, and it orders
 candidates by clock time rather than `sort_order` — that column is a display
 preference and nothing stops it disagreeing with the timetable. With no active
 windows at all, the banner falls back to **Outside Meal Hours**.
+
+`previous_period` is its mirror image, and feeds the other half of the "check in
+anyway" offer. It searches the same full week backwards, so at 7 am on a Monday
+the meal that just closed is Sunday's dinner rather than nothing. It also keeps
+looking for one day past the first window it finds, because a window that wraps
+midnight closes on the day *after* the day it is listed under: a Friday late
+meal ending at 01:00 closes after a Saturday window that ended at 00:30, so the
+day a window is filed under is not enough to order two of them by.
 
 It also runs `enroll.js` against the rendered `/enroll` page, for a related
 reason: that page submits to two different endpoints depending on its mode.

@@ -33,6 +33,7 @@
   let current = "idle";
   let resultTimer = null;
   let lastResult = null;
+  let lastScan = null; // { value, credentialType } — what "check in anyway" re-sends
 
   /* ---------------- reader focus watchdog ----------------
    *
@@ -206,12 +207,18 @@
 
   /* ---------------- scanning ---------------- */
 
-  async function submitScan(value, credentialType) {
+  async function submitScan(value, credentialType, attach) {
     const payload = {
       value: value,
       credential_type: credentialType,
       occurred_at: new Date().toISOString(),
     };
+    // Only ever set by the "check in anyway" buttons, and only ever honoured by
+    // the server when nothing is being served — see services/scan.py.
+    if (attach) payload.attach = attach;
+    // Remembered so those buttons can re-submit this scan without the member
+    // having to tap their card a second time.
+    lastScan = { value: value, credentialType: credentialType };
     try {
       const result = await post("/api/scan", payload);
       renderResult(result);
@@ -328,10 +335,16 @@
     el("guestBtn").hidden = !member;
     el("undoBtn").hidden = !result.attendance_id;
 
+    const offering = renderAnyway(result);
+
     show("result");
     // Leave an unrecognized card on screen longer: staff have to walk over and
-    // read it, which takes more than six seconds.
-    const seconds = unknown ? 20 : result.result_seconds || CONFIG.resultSeconds;
+    // read it, which takes more than six seconds. A check-in offered a choice
+    // of meals gets the same grace — six seconds is not long enough to read two
+    // buttons and decide, and the screen vanishing mid-decision is exactly the
+    // trip back to the kiosk this feature exists to save.
+    const seconds =
+      unknown || offering ? 20 : result.result_seconds || CONFIG.resultSeconds;
     resultTimer = setTimeout(backToIdle, seconds * 1000);
 
     // A second tap inside one meal period is how a member signs a guest in:
@@ -345,6 +358,7 @@
 
   function renderError(message) {
     lastResult = null;
+    renderAnyway(null);
     setFallbackInitials("!");
     setResultName("Not recorded", "");
     el("resultMeta").textContent = "";
@@ -360,6 +374,7 @@
 
   function renderQueued() {
     lastResult = null;
+    renderAnyway(null);
     setFallbackInitials("…");
     setResultName("Saved offline", "");
     el("resultMeta").textContent = "The server is unreachable right now.";
@@ -373,6 +388,64 @@
     writeQueue(readQueue());
     resultTimer = setTimeout(backToIdle, CONFIG.resultSeconds * 1000);
   }
+
+  /* ---------------- check in anyway ----------------
+   *
+   * A member who is a few minutes early for dinner, or a few minutes late off
+   * lunch, is told which meals sit either side of now and can put their
+   * check-in against one of them. It is a re-submit of the scan the server has
+   * already refused, not a new kind of request: the same value goes back to the
+   * same endpoint with the member's choice attached, so the offline queue, the
+   * duplicate guard and the weekly counter all behave exactly as they would for
+   * a tap inside the window.
+   *
+   * The buttons are only ever drawn from what the server offered. A club with
+   * nothing scheduled before now gets one button, and a kiosk that has been
+   * told nothing gets none — never a button naming a meal that does not exist. */
+
+  const ANYWAY_BUTTONS = { previous: el("anywayPrev"), next: el("anywayNext") };
+
+  // Words, not a clock face: "12:30" beside a meal name reads as a time of day,
+  // which is the one thing it is not.
+  function describeGap(seconds) {
+    const whole = Math.max(0, Math.floor(seconds));
+    if (whole < 60) return "under a minute";
+    const hours = Math.floor(whole / 3600);
+    const minutes = Math.floor((whole % 3600) / 60);
+    if (!hours) return `${minutes} min`;
+    return minutes ? `${hours} hr ${minutes} min` : `${hours} hr`;
+  }
+
+  function describeOffer(offer) {
+    return offer.direction === "previous"
+      ? `ended ${describeGap(offer.seconds_away)} ago`
+      : `starts in ${describeGap(offer.seconds_away)}`;
+  }
+
+  // Returns whether anything is being offered, which is what tells renderResult
+  // to leave the screen up long enough to read it.
+  function renderAnyway(result) {
+    const offers =
+      (result && result.outcome === "outside_service" && result.offers) || [];
+    Object.keys(ANYWAY_BUTTONS).forEach((direction) => {
+      const button = ANYWAY_BUTTONS[direction];
+      const offer = offers.filter((item) => item.direction === direction)[0];
+      button.hidden = !offer;
+      if (!offer) return;
+      button.querySelector(".anyway-meal").textContent = offer.period_name;
+      button.querySelector(".anyway-when").textContent = describeOffer(offer);
+    });
+    el("anywayBox").hidden = offers.length === 0;
+    return offers.length > 0;
+  }
+
+  el("anywayBox").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-direction]");
+    // Nothing to re-send means nothing to do: without the original card value
+    // this would post an empty scan.
+    if (!button || !lastScan) return;
+    submitScan(lastScan.value, lastScan.credentialType, button.dataset.direction);
+  });
 
   /* ---------------- manual ID entry ----------------
    *

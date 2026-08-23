@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +19,11 @@ class ScanRequest(BaseModel):
     credential_type: str = CredentialType.CSN.value
     force: bool = False
     staff_pin: str | None = None
+    # Which of the two meals either side of now a between-meals check-in is
+    # for — the member's answer to the offer in ScanResponse.offers. A Literal
+    # rather than a plain string so a typo is refused here rather than silently
+    # resolving to no window at all.
+    attach: Literal["previous", "next"] | None = None
     # Set by the kiosk when replaying a scan it queued while the server was
     # unreachable, so a meal eaten at 18:05 is not recorded as 18:40. Live
     # scans send it too; the server ignores anything implausible.
@@ -148,6 +154,20 @@ class AlumniSummary(BaseModel):
     netid: str | None
 
 
+class AdjacentPeriodOut(BaseModel):
+    """A meal the kiosk may offer to attach a between-meals check-in to.
+
+    `seconds_away` is a duration rather than a timestamp, for the reason the
+    banner countdown is: the kiosk laptop's own clock is not to be trusted, and
+    "starts in 12 min" survives a wrong one where "starts at 17:45" does not.
+    """
+
+    direction: Literal["previous", "next"]
+    period_name: str
+    service_date: date
+    seconds_away: int
+
+
 class ScanResponse(BaseModel):
     outcome: str
     ok: bool
@@ -167,3 +187,7 @@ class ScanResponse(BaseModel):
     # having to tap again.
     submitted_value: str | None = None
     submitted_type: str | None = None
+    # Only ever populated on outcome="outside_service": the meals the member may
+    # check in against anyway. Empty means there is nothing to offer, so the
+    # kiosk shows no box at all.
+    offers: list[AdjacentPeriodOut] = []

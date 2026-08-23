@@ -97,6 +97,38 @@ def closed_service(db):
 
 
 @pytest.fixture
+def between_meals(db):
+    """A schedule with one window that closed an hour ago and one that opens in
+    three hours, so right now falls squarely between two meals.
+
+    Anchored to the real clock for the reason closed_service is: the scan
+    endpoint reads it directly, and what these tests are about is what a member
+    is offered when nothing is open at the instant they tap.
+    """
+    db.query(MealPeriod).delete()
+    now = datetime.now(local_tz())
+    closed = now - timedelta(hours=1)
+    opens = now + timedelta(hours=3)
+    windows = [("Lunch", closed - timedelta(hours=2), closed), ("Dinner", opens, opens + timedelta(hours=2))]
+    for name, start, end in windows:
+        db.add(
+            MealPeriod(
+                name=name,
+                # Taken from the window's own start, not from today: three hours
+                # from now can be tomorrow, and an hour ago can be yesterday.
+                weekday=start.weekday(),
+                start_time=start.time().replace(second=0, microsecond=0),
+                end_time=end.time().replace(second=0, microsecond=0),
+                counts_toward_allotment=True,
+                is_active=True,
+                sort_order=1,
+            )
+        )
+    db.commit()
+    return db
+
+
+@pytest.fixture
 def wide_service(db):
     """Replace the schedule with one all-day window per day.
 
@@ -291,6 +323,58 @@ class TestScanApi:
             "/api/scan", json={"value": "04A1B2C3D4E5F601", "force": True, "staff_pin": STAFF_PIN}
         )
         assert allowed.status_code == 200
+
+
+class TestCheckInAnywayApi:
+    """What the kiosk is handed between meals, and what it may send back."""
+
+    def test_a_closed_club_names_the_meals_either_side(self, client, member, between_meals):
+        body = client.post("/api/scan", json={"value": "04A1B2C3D4E5F601"}).json()
+        assert body["outcome"] == "outside_service"
+        offers = {offer["direction"]: offer for offer in body["offers"]}
+        assert offers["previous"]["period_name"] == "Lunch"
+        assert offers["next"]["period_name"] == "Dinner"
+        # A duration, not a timestamp — the kiosk's own clock is not trusted.
+        assert 0 < offers["next"]["seconds_away"] <= 3 * 60 * 60
+
+    def test_picking_the_next_meal_records_it(self, client, member, between_meals, db):
+        body = client.post(
+            "/api/scan", json={"value": "04A1B2C3D4E5F601", "attach": "next"}
+        ).json()
+        assert body["outcome"] == "checked_in"
+        assert body["period_name"] == "Dinner"
+        assert "Checked in before Dinner opened" in body["warnings"]
+        assert db.query(Attendance).count() == 1
+
+    def test_picking_the_previous_meal_records_it(self, client, member, between_meals):
+        body = client.post(
+            "/api/scan", json={"value": "04A1B2C3D4E5F601", "attach": "previous"}
+        ).json()
+        assert body["outcome"] == "checked_in"
+        assert body["period_name"] == "Lunch"
+
+    def test_it_needs_no_staff_authorization(self, client, member, between_meals):
+        """Unlike forcing a second meal. Being early for dinner is not an
+        offence, and fetching staff for it would defeat the point."""
+        response = client.post(
+            "/api/scan", json={"value": "04A1B2C3D4E5F601", "attach": "next"}
+        )
+        assert response.status_code == 200
+
+    def test_only_the_two_directions_are_accepted(self, client, member, between_meals):
+        response = client.post(
+            "/api/scan", json={"value": "04A1B2C3D4E5F601", "attach": "whenever"}
+        )
+        assert response.status_code == 422
+
+    def test_a_serving_club_offers_nothing_and_ignores_a_choice(
+        self, client, member, wide_service
+    ):
+        body = client.post(
+            "/api/scan", json={"value": "04A1B2C3D4E5F601", "attach": "next"}
+        ).json()
+        assert body["offers"] == []
+        assert body["period_name"] in {"Lunch", "Brunch"}  # the window that is open
 
 
 class TestEnrollment:

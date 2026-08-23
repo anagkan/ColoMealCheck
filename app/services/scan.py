@@ -34,7 +34,13 @@ from app.services.audit import record as audit
 from app.services.club_settings import ClubConfig, load_config
 from app.services.guests import GuestUsage, guest_usage
 from app.services.netid import normalize_netid
-from app.services.periods import resolve_period
+from app.services.periods import (
+    PREVIOUS,
+    AdjacentPeriod,
+    adjacent_period,
+    adjacent_periods,
+    resolve_period,
+)
 
 
 class ScanOutcome(str, enum.Enum):
@@ -71,6 +77,9 @@ class ScanResult:
     warnings: list[str] = field(default_factory=list)
     submitted_value: str | None = None
     submitted_type: str | None = None
+    # The windows either side of a scan that landed between meals, so the kiosk
+    # can offer them rather than only saying no. Empty on every other outcome.
+    offers: list[AdjacentPeriod] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -88,6 +97,18 @@ def _status_warning(member: Member) -> str | None:
     return member.status
 
 
+def _attached_note(attached: AdjacentPeriod) -> str:
+    """What the result screen says about a meal booked outside its own window.
+
+    The row itself looks exactly like any other check-in, so this line is what
+    tells the member which meal they just spent — the one thing about an early
+    check-in that is not obvious from the screen.
+    """
+    if attached.direction == PREVIOUS:
+        return f"Checked in after {attached.period.name} closed"
+    return f"Checked in before {attached.period.name} opened"
+
+
 def process_scan(
     db: Session,
     value: str,
@@ -96,11 +117,19 @@ def process_scan(
     config: ClubConfig | None = None,
     force: bool = False,
     actor: str = "kiosk",
+    attach: str | None = None,
 ) -> ScanResult:
     """Check a member in.
 
     `moment` defaults to now; tests inject it. `force` is the staff-authorized
     escape hatch for a genuine second meal in one period.
+
+    `attach` is the between-meals one: a member who arrives a few minutes early
+    is told which windows sit either side of now, and `attach` is which of the
+    two they picked. It needs no staff PIN — being early for dinner is not an
+    offence, and the alternative is asking somebody to leave and come back — but
+    it is only ever honoured when nothing is open, so it can never move a meal
+    off the window that is actually serving.
     """
     moment = moment or datetime.now(timezone.utc)
     config = config or load_config(db)
@@ -118,9 +147,22 @@ def process_scan(
     service_date = resolved.service_date
     period = resolved.period
 
+    attached = adjacent_period(db, moment, attach) if period is None and attach else None
+    if attached is not None:
+        # The meal moves, and the service date moves with it: an early check-in
+        # at midnight for tomorrow's breakfast belongs to tomorrow's service day
+        # and tomorrow's meal week, not to the day the clock happens to read.
+        period = attached.period
+        service_date = attached.service_date
+
+    # Both counters are read after the window is settled, never before, so they
+    # are the counters for the week the meal is actually booked into.
     weekly = weekly_usage(db, member, service_date, config)
     guests = guest_usage(db, member, service_date, config)
     warnings: list[str] = []
+
+    if attached is not None:
+        warnings.append(_attached_note(attached))
 
     status_warning = _status_warning(member)
     if status_warning:
@@ -134,6 +176,9 @@ def process_scan(
             weekly=weekly,
             guests=guests,
             warnings=warnings,
+            # Named here rather than by the router, so the offer and the rule
+            # that honours it are decided in the same place and cannot drift.
+            offers=adjacent_periods(db, moment),
             message="No meal is being served right now.",
         )
 
@@ -202,6 +247,25 @@ def process_scan(
             entity_type="attendance",
             entity_id=attendance.id,
             detail={"member_id": member.id, "period": period.name},
+        )
+
+    if attached is not None:
+        # Audited but not marked as an override on the row itself: override_by
+        # is what lifts the one-meal-per-period duplicate guard (see models.py),
+        # and an early check-in must stay under it — otherwise the member could
+        # check in early and again once the window opened, and be charged twice.
+        audit(
+            db,
+            actor=actor,
+            action="attendance.outside_service",
+            entity_type="attendance",
+            entity_id=attendance.id,
+            detail={
+                "member_id": member.id,
+                "period": period.name,
+                "direction": attached.direction,
+                "seconds_away": attached.seconds_away,
+            },
         )
 
     if is_overage:

@@ -289,6 +289,38 @@ body {
 .action-btn:hover { background: var(--gold-dark); }
 .action-btn.subtle:hover { background: transparent; border-color: var(--gold); color: var(--ink); }
 
+/* ---------- check in anyway ---------- */
+
+/* Sits directly under the band that just said no meal is being served, and is
+   read as its continuation — hence the same full width and the small gap above.
+   Boxed and bordered rather than loose buttons, so it is plainly an offer being
+   made about the sentence above it rather than a third row of result actions. */
+.anyway-box {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  align-items: center;
+  padding: 1.25rem 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--panel-2);
+}
+.anyway-head { margin: 0; font-size: 1.15rem; color: var(--ink-dim); }
+.anyway-actions { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center; }
+/* Two lines per button: the meal is what is being chosen, and how far away it
+   is, is what makes the choice obvious at a glance. */
+.anyway-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  min-width: 13rem;
+  line-height: 1.25;
+}
+.anyway-meal { font-size: 1.3rem; font-weight: 650; }
+.anyway-when { font-size: 0.92rem; opacity: 0.75; font-weight: 500; }
+
 /* ---------- panels ---------- */
 
 .panel {
@@ -372,15 +404,35 @@ body {
 
 /* Last line on the page, below the fold of everything that matters. Whoever
    inherits this kiosk needs a name to ask about it. */
+/* Two stacked lines: the byline, then the repo link under it. The dimming
+   sits on the byline rather than on this box, so the link below can be the
+   same white as the rest of the kiosk's text. */
 .kiosk-credit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
   text-align: center;
   font-size: 0.8rem;
-  color: var(--ink-dim);
-  opacity: 0.7;
   margin: 0;
   padding: 0.75rem 1.75rem;
   border-top: 1px solid var(--line);
 }
+.credit-line {
+  margin: 0;
+  color: var(--ink-dim);
+  opacity: 0.7;
+}
+
+.repo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--ink);
+  text-decoration: none;
+}
+.repo-link:hover { color: var(--gold); }
+.repo-link svg { display: block; }
 
 .modal-backdrop {
   position: fixed;

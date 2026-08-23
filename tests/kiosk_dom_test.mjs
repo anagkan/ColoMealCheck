@@ -91,6 +91,37 @@ const alumniRecorded = (url) =>
         period_name: "Dinner", attendance_id: 11, result_seconds: 6 }
     : null;
 
+/* A card tapped between meals: refused, but with the windows either side named
+ * so the kiosk can offer them. The second scan — the one carrying the member's
+ * choice — comes back as an ordinary check-in, which is exactly what the server
+ * does once a meal has been attached. */
+function betweenMeals(offers = null) {
+  const named = offers || [
+    { direction: "previous", period_name: "Lunch", service_date: "2026-01-05",
+      seconds_away: 1500 },
+    { direction: "next", period_name: "Dinner", service_date: "2026-01-05",
+      seconds_away: 900 },
+  ];
+  return (url, body) => {
+    if (!url.includes("/api/scan")) return null;
+    if (body && body.attach) {
+      return { outcome: "checked_in", ok: true,
+               message: "Checked in — 1 of 19 this week.",
+               warnings: ["Checked in before Dinner opened"], member: AVERY,
+               period_name: "Dinner",
+               weekly: { used: 1, allotment: 19, remaining: 18, is_over: false },
+               guests: { used: 0, quota: 2, remaining: 2 }, offers: [],
+               attendance_id: 12, result_seconds: 6 };
+    }
+    return { outcome: "outside_service", ok: false,
+             message: "No meal is being served right now.", warnings: [],
+             member: AVERY,
+             weekly: { used: 0, allotment: 19, remaining: 19, is_over: false },
+             guests: { used: 0, quota: 2, remaining: 2 },
+             offers: named, result_seconds: 6 };
+  };
+}
+
 const guestRecorded = (url) =>
   url.includes("/api/guest")
     ? { outcome: "guest_recorded", ok: true,
@@ -462,13 +493,151 @@ async function testMealBannerAsksTheServerWhenTheWindowCloses() {
   dom.window.close();
 }
 
-/* ---------------- guest meal popup ---------------- */
-
 function click(window, id) {
   window.document
     .getElementById(id)
     .dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 }
+
+/* ---------------- check in anyway ----------------
+ *
+ * A member five minutes early for dinner should be able to eat rather than be
+ * sent away to come back. The kiosk offers the meals either side of now, and
+ * picking one re-submits the scan the server has already refused — so the
+ * button has to carry the original card value, which nobody should have to tap
+ * a second time. */
+
+async function testBetweenMealsBothNeighbouringMealsAreOffered() {
+  const { window, dom } = boot({}, betweenMeals());
+  const doc = window.document;
+
+  check("the offer starts hidden", doc.getElementById("anywayBox").hidden === true);
+
+  typeAll(window, "A1B2C3D4");
+  typeKey(window, "Enter");
+  await settle();
+
+  check("a tap between meals still says nothing is being served",
+        doc.getElementById("resultMessage").textContent ===
+          "No meal is being served right now.",
+        `band read ${JSON.stringify(doc.getElementById("resultMessage").textContent)}`);
+  check("and offers the way out underneath it",
+        doc.getElementById("anywayBox").hidden === false);
+
+  const prev = doc.getElementById("anywayPrev");
+  const next = doc.getElementById("anywayNext");
+  check("both meals are named, one per button",
+        prev.hidden === false && next.hidden === false &&
+          prev.querySelector(".anyway-meal").textContent === "Lunch" &&
+          next.querySelector(".anyway-meal").textContent === "Dinner",
+        `prev=${prev.textContent} next=${next.textContent}`);
+  check("with how far away each one is, in words rather than a clock face",
+        prev.querySelector(".anyway-when").textContent === "ended 25 min ago" &&
+          next.querySelector(".anyway-when").textContent === "starts in 15 min",
+        `prev=${JSON.stringify(prev.querySelector(".anyway-when").textContent)} ` +
+          `next=${JSON.stringify(next.querySelector(".anyway-when").textContent)}`);
+
+  dom.window.close();
+}
+
+async function testPickingAMealResubmitsTheSameCard() {
+  const { window, calls, dom } = boot({}, betweenMeals());
+  const doc = window.document;
+
+  typeAll(window, "A1B2C3D4");
+  typeKey(window, "Enter");
+  await settle();
+
+  click(window, "anywayNext");
+  await settle();
+
+  const scans = calls.filter((c) => String(c.url).includes("/api/scan"));
+  check("picking a meal sends a second scan", scans.length === 2,
+        `got ${scans.length}`);
+  check("carrying the same card, so nobody taps twice",
+        scans.length === 2 && scans[1].body.value === "A1B2C3D4" &&
+          scans[1].body.credential_type === "csn",
+        scans.length === 2 ? JSON.stringify(scans[1].body) : "no second scan");
+  check("and the meal that was picked",
+        scans.length === 2 && scans[1].body.attach === "next",
+        scans.length === 2 ? `attach was ${scans[1].body.attach}` : "no second scan");
+  check("the first scan asked for no meal at all",
+        scans.length >= 1 && scans[0].body.attach === undefined,
+        scans.length ? JSON.stringify(scans[0].body) : "no scan");
+  check("the confirmation replaces the offer rather than sitting under it",
+        doc.getElementById("anywayBox").hidden === true &&
+          doc.getElementById("resultMessage").textContent ===
+            "Checked in — 1 of 19 this week.",
+        `band read ${JSON.stringify(doc.getElementById("resultMessage").textContent)}`);
+  check("and says which meal was spent, which the screen cannot otherwise show",
+        doc.getElementById("resultWarnings").textContent ===
+          "Checked in before Dinner opened",
+        `warnings read ${JSON.stringify(doc.getElementById("resultWarnings").textContent)}`);
+
+  dom.window.close();
+}
+
+/* A club with nothing scheduled on one side gets one button, not one naming a
+ * meal that does not exist. */
+async function testOnlyTheMealsTheServerOffersGetButtons() {
+  const { window, dom } = boot({}, betweenMeals([
+    { direction: "next", period_name: "Breakfast", service_date: "2026-01-06",
+      seconds_away: 45015 },
+  ]));
+  const doc = window.document;
+
+  typeAll(window, "A1B2C3D4");
+  typeKey(window, "Enter");
+  await settle();
+
+  check("the offered meal gets its button",
+        doc.getElementById("anywayNext").hidden === false &&
+          doc.getElementById("anywayNext").querySelector(".anyway-meal").textContent ===
+            "Breakfast");
+  check("the meal that was not offered gets none",
+        doc.getElementById("anywayPrev").hidden === true);
+  check("and a wait of half a day reads in hours",
+        doc.getElementById("anywayNext").querySelector(".anyway-when").textContent ===
+          "starts in 12 hr 30 min",
+        `read ${JSON.stringify(doc.getElementById("anywayNext")
+          .querySelector(".anyway-when").textContent)}`);
+
+  dom.window.close();
+}
+
+async function testAnUnrecognizedCardIsOfferedNothing() {
+  const { window, dom } = boot();  // every card comes back unknown
+  const doc = window.document;
+
+  typeAll(window, "A1B2C3D4");
+  typeKey(window, "Enter");
+  await settle();
+
+  check("a card the club does not know is offered no meal to check into",
+        doc.getElementById("anywayBox").hidden === true);
+
+  dom.window.close();
+}
+
+/* Six seconds is not long enough to read two buttons and decide, and the screen
+ * vanishing mid-decision is the trip back to the kiosk this feature exists to
+ * save. */
+async function testTheOfferOutlivesTheUsualResultTimeout() {
+  const { window, dom } = boot({ resultSeconds: 1 }, betweenMeals());
+  const doc = window.document;
+
+  typeAll(window, "A1B2C3D4");
+  typeKey(window, "Enter");
+  await new Promise((resolve) => setTimeout(resolve, 1400));
+
+  check("the offer is still on screen after the usual timeout",
+        doc.getElementById("anywayBox").hidden === false &&
+          doc.getElementById("result").hidden === false);
+
+  dom.window.close();
+}
+
+/* ---------------- guest meal popup ---------------- */
 
 async function testGuestButtonOpensThePopupAsksWhoIsHosting() {
   const { window, dom } = boot();
@@ -1114,6 +1283,11 @@ await testTheNoCardButtonIsGone();
 await testUnknownCardOffersTheEnrollmentPage();
 await testCardStillWorksOnIdle();
 await testStrayDigitsDoNotLeakIntoTheNextScan();
+await testBetweenMealsBothNeighbouringMealsAreOffered();
+await testPickingAMealResubmitsTheSameCard();
+await testOnlyTheMealsTheServerOffersGetButtons();
+await testAnUnrecognizedCardIsOfferedNothing();
+await testTheOfferOutlivesTheUsualResultTimeout();
 await testGuestButtonOpensThePopupAsksWhoIsHosting();
 await testTheHostCanBeSearchedForByName();
 await testSecondTapInAPeriodOpensThePopupPrefilled();

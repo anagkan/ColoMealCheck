@@ -94,6 +94,7 @@ def periods_for_day(db: Session, day: date) -> list[MealPeriod]:
 @dataclass(frozen=True)
 class UpcomingPeriod:
     period: MealPeriod
+    service_date: date
     starts_at: datetime
     seconds_until: int
 
@@ -120,8 +121,104 @@ def next_period(
             if starts_at <= local:
                 continue
             delta = starts_at.astimezone(timezone.utc) - local.astimezone(timezone.utc)
-            return UpcomingPeriod(period, starts_at, max(0, int(delta.total_seconds())))
+            return UpcomingPeriod(period, day, starts_at, max(0, int(delta.total_seconds())))
     return None
+
+
+# The two sides of a moment that falls between meals. Strings rather than an
+# enum because they cross the wire to the kiosk and back again.
+PREVIOUS = "previous"
+NEXT = "next"
+
+
+@dataclass(frozen=True)
+class AdjacentPeriod:
+    """A closed window offered to somebody standing at the kiosk between meals.
+
+    Carries its own service_date because it need not be today's: at eight on a
+    Monday morning the meal that just closed is Sunday dinner, and a check-in
+    attached to it belongs to Sunday's service day and Sunday's meal week.
+    """
+
+    direction: str  # PREVIOUS or NEXT
+    period: MealPeriod
+    service_date: date
+    seconds_away: int  # since it closed, or until it opens
+
+
+def previous_period(
+    db: Session, moment: datetime, tz: ZoneInfo | None = None
+) -> AdjacentPeriod | None:
+    """The last window to close before `moment` — next_period's mirror image.
+
+    Not the same thing as nearest_period below: this one only ever looks
+    backwards, and it searches the same full week forwards that next_period
+    does, so the answer on a Monday morning is Sunday's dinner rather than
+    nothing.
+
+    A window that wraps midnight closes on the day *after* the day it is listed
+    under, so the day it is listed under is not enough to order two windows by:
+    a Friday late meal ending at 01:00 closes after a Saturday window that ended
+    at 00:30. That is why the search keeps going for one day past the first hit
+    rather than returning it — no window reaches further back than that.
+    """
+    tz = tz or local_tz()
+    local = to_local(moment, tz)
+    best: AdjacentPeriod | None = None
+    best_end: datetime | None = None
+
+    for offset in range(8):
+        day = local.date() - timedelta(days=offset)
+        for period in _active_periods(db, day.weekday()):
+            end_day = day + timedelta(days=1) if _wraps_midnight(period) else day
+            ends_at = datetime.combine(end_day, period.end_time, tzinfo=tz)
+            if ends_at >= local:
+                continue
+            if best_end is not None and ends_at <= best_end:
+                continue
+            # Both sides to UTC before subtracting, for the reason
+            # seconds_remaining gives: a gap spanning a DST change is not the
+            # gap the clock face shows.
+            delta = local.astimezone(timezone.utc) - ends_at.astimezone(timezone.utc)
+            best = AdjacentPeriod(PREVIOUS, period, day, max(0, int(delta.total_seconds())))
+            best_end = ends_at
+        if best is not None and best.service_date != day:
+            return best
+    return best
+
+
+def adjacent_period(
+    db: Session, moment: datetime, direction: str, tz: ZoneInfo | None = None
+) -> AdjacentPeriod | None:
+    """The window on one side of `moment`, named so the kiosk can offer it.
+
+    A member who is five minutes early for dinner, or five minutes late off
+    lunch, should be able to eat rather than be sent away to come back — so
+    between meals the kiosk names both neighbouring windows and lets them pick
+    one. This resolves that pick; services/scan.py decides whether to honour it.
+    """
+    if direction == NEXT:
+        upcoming = next_period(db, moment, tz)
+        if upcoming is None:
+            return None
+        return AdjacentPeriod(
+            NEXT, upcoming.period, upcoming.service_date, upcoming.seconds_until
+        )
+    if direction == PREVIOUS:
+        return previous_period(db, moment, tz)
+    return None
+
+
+def adjacent_periods(
+    db: Session, moment: datetime, tz: ZoneInfo | None = None
+) -> list[AdjacentPeriod]:
+    """Both windows a between-meals check-in could be attached to.
+
+    Either may be missing — a brand-new schedule has no previous meal — and the
+    kiosk shows a button per window it is actually given.
+    """
+    found = (adjacent_period(db, moment, direction, tz) for direction in (PREVIOUS, NEXT))
+    return [item for item in found if item is not None]
 
 
 def period_ends_at(resolved: ResolvedPeriod) -> datetime | None:

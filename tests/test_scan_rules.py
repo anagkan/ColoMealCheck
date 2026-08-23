@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from app.models import (
     Attendance,
     AttendanceKind,
+    AuditLog,
     CredentialType,
     EntryMethod,
     MealPeriod,
@@ -244,6 +245,107 @@ class TestServiceWindows:
         result = process_scan(db, CARD, moment=eastern(2026, 1, 5, 15, 30))
         assert result.outcome is ScanOutcome.OUTSIDE_SERVICE
         assert result.member is not None  # the kiosk still shows who they are
+        assert db.query(Attendance).count() == 0
+
+    def test_it_offers_the_meals_either_side_instead_of_only_refusing(
+        self, db, member_with_card
+    ):
+        """15:30 Monday is between lunch and dinner. Both are named, so the
+        kiosk can put a button on each rather than sending the member away."""
+        result = process_scan(db, CARD, moment=eastern(2026, 1, 5, 15, 30))
+        assert [(o.direction, o.period.name) for o in result.offers] == [
+            ("previous", "Lunch"),
+            ("next", "Dinner"),
+        ]
+
+    def test_a_check_in_inside_a_window_offers_nothing(self, db, member_with_card):
+        """The offer is only ever an answer to 'nothing is open'. Carrying it on
+        an ordinary check-in would put the buttons on a screen where picking one
+        could only move a meal off the window that is actually serving."""
+        result = process_scan(db, CARD, moment=eastern(2026, 1, 5, 12, 0))
+        assert result.offers == []
+
+
+class TestCheckInAnyway:
+    """The member who is a few minutes early — or a few minutes late.
+
+    Nothing here is staff-authorized: being early for dinner is not an offence,
+    and the alternative is telling somebody to leave and come back.
+    """
+
+    def test_the_next_meal_can_be_checked_into_early(self, db, member_with_card):
+        # 17:30 Monday, fifteen minutes before dinner opens.
+        result = process_scan(db, CARD, moment=eastern(2026, 1, 5, 17, 30), attach="next")
+        assert result.outcome is ScanOutcome.CHECKED_IN
+        assert result.period.name == "Dinner"
+        assert result.attendance.service_date == MONDAY
+        assert result.weekly.used == 1
+
+    def test_the_previous_meal_can_be_checked_into_late(self, db, member_with_card):
+        result = process_scan(
+            db, CARD, moment=eastern(2026, 1, 5, 14, 0), attach="previous"
+        )
+        assert result.outcome is ScanOutcome.CHECKED_IN
+        assert result.period.name == "Lunch"
+        assert result.attendance.service_date == MONDAY
+
+    def test_the_result_says_which_meal_was_spent(self, db, member_with_card):
+        """The row looks like any other check-in, so this line is the only thing
+        that tells the member their tap went against a meal that is not open."""
+        early = process_scan(db, CARD, moment=eastern(2026, 1, 5, 17, 30), attach="next")
+        assert "Checked in before Dinner opened" in early.warnings
+
+        late = process_scan(db, CARD, moment=eastern(2026, 1, 5, 14, 0), attach="previous")
+        assert "Checked in after Lunch closed" in late.warnings
+
+    def test_an_early_check_in_is_still_one_meal(self, db, member_with_card):
+        """The duplicate guard is the whole reason an early check-in is not
+        recorded as a staff override: a member who checks in early and taps
+        again once dinner opens must not be charged for two dinners."""
+        early = process_scan(db, CARD, moment=eastern(2026, 1, 5, 17, 30), attach="next")
+        again = process_scan(db, CARD, moment=eastern(2026, 1, 5, 18, 0))
+        assert again.outcome is ScanOutcome.ALREADY_CHECKED_IN
+        assert again.attendance.id == early.attendance.id
+        assert db.query(Attendance).count() == 1
+
+    def test_it_is_ignored_while_a_meal_is_being_served(self, db, member_with_card):
+        """Otherwise a tap at noon could be booked against breakfast or dinner,
+        which is not a choice anybody standing in the lunch queue should have."""
+        result = process_scan(db, CARD, moment=eastern(2026, 1, 5, 12, 0), attach="previous")
+        assert result.period.name == "Lunch"
+        assert result.warnings == []
+
+    def test_a_meal_on_the_day_before_is_booked_against_that_day(self, db, member_with_card):
+        """07:00 Monday reaches back to Sunday dinner. Filing it under Monday
+        would put the meal in the wrong week as well as the wrong day — Sunday
+        is the last day of its meal week, Monday the first of the next."""
+        result = process_scan(
+            db, CARD, moment=eastern(2026, 1, 5, 7, 0), attach="previous"
+        )
+        assert result.period.name == "Dinner"
+        assert result.attendance.service_date == date(2026, 1, 4)  # Sunday
+
+    def test_it_is_audited(self, db, member_with_card):
+        process_scan(db, CARD, moment=eastern(2026, 1, 5, 17, 30), attach="next")
+        entry = db.query(AuditLog).filter(
+            AuditLog.action == "attendance.outside_service"
+        ).one()
+        assert entry.detail["period"] == "Dinner"
+        assert entry.detail["direction"] == "next"
+
+    def test_an_unknown_direction_changes_nothing(self, db, member_with_card):
+        result = process_scan(
+            db, CARD, moment=eastern(2026, 1, 5, 15, 30), attach="sideways"
+        )
+        assert result.outcome is ScanOutcome.OUTSIDE_SERVICE
+        assert db.query(Attendance).count() == 0
+
+    def test_with_no_schedule_there_is_nothing_to_attach_to(self, db, member_with_card):
+        db.query(MealPeriod).delete()
+        db.commit()
+        result = process_scan(db, CARD, moment=eastern(2026, 1, 5, 15, 30), attach="next")
+        assert result.outcome is ScanOutcome.OUTSIDE_SERVICE
+        assert result.offers == []
         assert db.query(Attendance).count() == 0
 
 

@@ -7,9 +7,12 @@ import pytest
 
 from app.models import MealPeriod
 from app.services.periods import (
+    adjacent_period,
+    adjacent_periods,
     month_bounds,
     nearest_period,
     next_period,
+    previous_period,
     resolve_period,
     seconds_remaining,
     week_bounds,
@@ -209,6 +212,106 @@ class TestNextPeriod:
         )
         db.commit()
         assert next_period(db, eastern(2026, 1, 5, 10, 30)).period.name == "Lunch"
+
+
+class TestPreviousPeriod:
+    """The other half of the kiosk's 'check in anyway' offer."""
+
+    def test_it_finds_the_window_that_just_closed(self, db):
+        # 14:00 Monday: lunch closed at 13:45, fifteen minutes ago.
+        recent = previous_period(db, eastern(2026, 1, 5, 14, 0))
+        assert recent is not None
+        assert recent.period.name == "Lunch"
+        assert recent.service_date == MONDAY
+        assert recent.seconds_away == 15 * 60
+
+    def test_it_rolls_back_to_the_day_before(self, db):
+        # 07:00 Monday: nothing has opened today, so it is Sunday's dinner —
+        # and it belongs to Sunday's service date, not to this morning.
+        recent = previous_period(db, eastern(2026, 1, 5, 7, 0))
+        assert recent.period.name == "Dinner"
+        assert recent.service_date == date(2026, 1, 4)
+        assert recent.seconds_away == (11 * 60 + 15) * 60  # 19:45 Sun -> 07:00 Mon
+
+    def test_sunday_morning_leads_back_to_saturday_not_friday(self, db):
+        recent = previous_period(db, eastern(2026, 1, 11, 9, 0))  # Sunday
+        assert recent.period.name == "Dinner"
+        assert recent.service_date == date(2026, 1, 10)  # Saturday
+
+    def test_during_a_meal_it_reports_the_one_before(self, db):
+        recent = previous_period(db, eastern(2026, 1, 5, 12, 0))  # inside Lunch
+        assert recent.period.name == "Breakfast"
+
+    def test_it_is_none_when_nothing_is_scheduled(self, db):
+        db.query(MealPeriod).delete()
+        db.commit()
+        assert previous_period(db, eastern(2026, 1, 5, 14, 0)) is None
+
+    def test_it_ignores_inactive_windows(self, db):
+        for row in db.query(MealPeriod).filter(MealPeriod.name == "Lunch").all():
+            row.is_active = False
+        db.commit()
+        assert previous_period(db, eastern(2026, 1, 5, 14, 0)).period.name == "Breakfast"
+
+    def test_a_window_past_midnight_is_the_most_recent_one(self, db):
+        """The case a day-by-day search gets wrong. Friday's late meal closes at
+        01:00 Saturday — after a Saturday window that closed at 00:30 — so
+        picking the newest window *listed under* the newest day is not enough."""
+        db.add_all(
+            [
+                MealPeriod(
+                    name="Late Meal",
+                    weekday=4,  # Friday
+                    start_time=time(22, 0),
+                    end_time=time(1, 0),
+                    counts_toward_allotment=True,
+                    is_active=True,
+                    sort_order=40,
+                ),
+                MealPeriod(
+                    name="Midnight Snack",
+                    weekday=5,  # Saturday, and closed before the Friday window
+                    start_time=time(0, 0),
+                    end_time=time(0, 30),
+                    counts_toward_allotment=False,
+                    is_active=True,
+                    sort_order=5,
+                ),
+            ]
+        )
+        db.commit()
+
+        recent = previous_period(db, eastern(2026, 1, 10, 2, 0))  # Saturday 02:00
+        assert recent.period.name == "Late Meal"
+        assert recent.service_date == date(2026, 1, 9)  # Friday, the day it opened
+        assert recent.seconds_away == 60 * 60
+
+
+class TestAdjacentPeriods:
+    """What the kiosk is handed to build its two 'check in anyway' buttons."""
+
+    def test_between_meals_both_sides_are_offered(self, db):
+        # 15:30 Monday: lunch has closed, dinner has not opened.
+        offers = adjacent_periods(db, eastern(2026, 1, 5, 15, 30))
+        assert [(o.direction, o.period.name) for o in offers] == [
+            ("previous", "Lunch"),
+            ("next", "Dinner"),
+        ]
+
+    def test_each_side_can_be_asked_for_by_name(self, db):
+        moment = eastern(2026, 1, 5, 15, 30)
+        assert adjacent_period(db, moment, "previous").period.name == "Lunch"
+        assert adjacent_period(db, moment, "next").period.name == "Dinner"
+
+    def test_an_unknown_direction_resolves_to_nothing(self, db):
+        """Rather than guessing a side. The API refuses the value before it gets
+        here; this is the layer that must not invent a meal if it ever does."""
+        assert adjacent_period(db, eastern(2026, 1, 5, 15, 30), "sideways") is None
+
+    def test_with_no_schedule_there_is_nothing_to_offer(self, db):
+        db.query(MealPeriod).delete()
+        db.commit()
+        assert adjacent_periods(db, eastern(2026, 1, 5, 15, 30)) == []
 
 
 class TestSecondsRemaining:
