@@ -17,7 +17,8 @@
   "use strict";
 
   const CONFIG = window.KIOSK_CONFIG || { resultSeconds: 6, undoSeconds: 60 };
-  const QUEUE_KEY = "colomeal.queue.v1";
+  const QUEUE_KEY = "colomeal.queue.v2";
+  const LEGACY_QUEUE_KEY = "colomeal.queue.v1";
 
   const el = (id) => document.getElementById(id);
   // Two screens, not three: typed-ID entry is a panel on the idle screen rather
@@ -54,7 +55,7 @@
   const READER_SCREENS = new Set(["idle", "result"]);
 
   function aModalIsOpen() {
-    return guestModalIsOpen() || alumniModalIsOpen();
+    return guestModalIsOpen() || alumniModalIsOpen() || unrecordedModalIsOpen();
   }
 
   function readerOwnsKeyboard() {
@@ -99,9 +100,10 @@
     manualInput.value = "";
     el("manualError").hidden = true;
     // The screen under a popup is changing, so the popup no longer belongs to
-    // anything. Closing it here does not loop: neither close function calls show.
+    // anything. Closing it here does not loop: no close function calls show.
     if (guestModalIsOpen()) closeGuestModal();
     if (alumniModalIsOpen()) closeAlumniModal();
+    if (unrecordedModalIsOpen()) closeUnrecordedModal();
 
     Object.entries(screens).forEach(([key, node]) => {
       node.hidden = key !== name;
@@ -160,50 +162,316 @@
     return response.json();
   }
 
-  /* ---------------- offline queue ---------------- */
+  /* ---------------- local storage ----------------
+   *
+   * localStorage is not guaranteed to work. A private-browsing window and a full
+   * disk both make setItem throw, and an unguarded throw here escaped
+   * submitScan's own catch block — leaving the member looking at the previous
+   * screen with no answer at all, which is the one thing the offline path exists
+   * to prevent. Every access goes through these two, and a page that cannot
+   * reach the disk falls back to memory for its own lifetime: worse than disk,
+   * but a session that keeps working beats one that silently stops. */
 
-  function readQueue() {
+  const memory = {};
+  // Keys whose last write did not reach the disk. For those the in-memory copy
+  // is the only correct one, so reads must not fall back to a stale disk copy.
+  const unpersisted = new Set();
+
+  function readList(key) {
+    if (unpersisted.has(key)) return memory[key] || [];
     try {
-      return JSON.parse(localStorage.getItem(QUEUE_KEY) || "[]");
+      const parsed = JSON.parse(localStorage.getItem(key) || "[]");
+      return Array.isArray(parsed) ? parsed : [];
     } catch (err) {
-      return [];
+      // Unreadable or corrupt: either way the disk copy cannot be trusted again.
+      unpersisted.add(key);
+      return memory[key] || [];
     }
   }
 
+  function writeList(key, items) {
+    memory[key] = items;
+    try {
+      localStorage.setItem(key, JSON.stringify(items));
+      unpersisted.delete(key);
+    } catch (err) {
+      unpersisted.add(key);
+    }
+  }
+
+  /* ---------------- offline queue ----------------
+   *
+   * Every kind of meal queues, not just a member's own check-in: a guest meal
+   * and an alumni meal are just as lost if the network drops while somebody is
+   * standing there, and they are the two that cannot be reconstructed afterwards
+   * from a card. So a queue entry names where it was going —
+   *
+   *     { path, body, label }
+   *
+   * — and the replay is the same request the popup would have made, which is
+   * what keeps the offline path from becoming a second, subtly different way to
+   * record a meal. `label` is only for the screen: it is what the entry is
+   * called if it ends up in front of staff. */
+
+  // Matches MAX_REPLAY_AGE_SECONDS in routers/api_scan.py. Past this the server
+  // refuses to believe the claimed time and files the meal under whenever it
+  // finally arrived — the wrong service date and the wrong meal week. The kiosk
+  // holds the same number so it can stop sending them rather than let them be
+  // misfiled; the server's copy is still the rule, this one just acts sooner.
+  const REPLAY_WINDOW_SECONDS = 24 * 60 * 60;
+
+  // A whole dinner service is a few hundred scans at the very most, so passing
+  // this means something pathological rather than a busy night.
+  const MAX_QUEUE = 500;
+
+  function readQueue() {
+    return readList(QUEUE_KEY);
+  }
+
   function writeQueue(items) {
-    localStorage.setItem(QUEUE_KEY, JSON.stringify(items));
+    let kept = items;
+    if (kept.length > MAX_QUEUE) {
+      // The newest are the ones kept: the oldest are closest to ageing out of
+      // the replay window, and a scan the server will not accept a time for is
+      // the least useful thing in here. They are not dropped, though — an
+      // unrecorded meal always goes in front of a human.
+      const lost = kept.slice(0, kept.length - MAX_QUEUE);
+      kept = kept.slice(kept.length - MAX_QUEUE);
+      lost.forEach((item) =>
+        addUnrecorded(item, "Queue overflowed — this scan was never sent.")
+      );
+    }
+    writeList(QUEUE_KEY, kept);
     const badge = el("offlineBadge");
-    if (items.length) {
+    if (kept.length) {
       badge.hidden = false;
-      badge.textContent = `Offline — ${items.length} queued`;
+      badge.textContent = `Offline — ${kept.length} queued`;
     } else {
       badge.hidden = true;
     }
   }
 
-  function enqueue(payload) {
+  function enqueue(path, body, label) {
     const items = readQueue();
-    items.push(payload);
+    // An identical request is one submit enqueued twice, not two meals:
+    // occurred_at is stamped per submit, so a genuine second meal a moment later
+    // carries a different one and still queues.
+    const serialized = JSON.stringify(body);
+    const seen = items.some(
+      (item) => item.path === path && JSON.stringify(item.body) === serialized
+    );
+    if (seen) return;
+    items.push({ path: path, body: body, label: label });
     writeQueue(items);
   }
 
+  function ageSeconds(item) {
+    const at = Date.parse((item.body && item.body.occurred_at) || "");
+    // No claimed time means the server will use its own, which is never stale.
+    if (isNaN(at)) return 0;
+    return (Date.now() - at) / 1000;
+  }
+
+  /* v1 of the queue held bare /api/scan bodies, from before guest and alumni
+   * meals could queue at all. A kiosk updated in the middle of an outage would
+   * otherwise throw away whatever was still waiting under the old key — the one
+   * thing this whole mechanism exists to prevent — so they are carried across
+   * once and the old key is emptied behind them. */
+  function migrateLegacyQueue() {
+    const legacy = readList(LEGACY_QUEUE_KEY);
+    if (!legacy.length) return;
+    const items = readQueue();
+    legacy.forEach((body) => {
+      items.push({ path: "/api/scan", body: body, label: describeScan(body) });
+    });
+    writeList(LEGACY_QUEUE_KEY, []);
+    writeQueue(items);
+  }
+
+  // Two flushes overlapping would each read the same queue, send everything
+  // twice and then write back a `remaining` that resurrects what the other one
+  // had just cleared. Three things start a flush — the timer, the online event
+  // and every successful scan — so they really do overlap.
+  let flushing = false;
+
   async function flushQueue() {
+    if (flushing) return;
     const items = readQueue();
     if (!items.length) return;
+    flushing = true;
     const remaining = [];
-    for (const item of items) {
-      try {
-        await post("/api/scan", item);
-      } catch (err) {
-        // Still unreachable — keep this and everything after it for next time.
-        remaining.push(item);
+    try {
+      for (let i = 0; i < items.length; i++) {
+        const item = items[i];
+        if (ageSeconds(item) > REPLAY_WINDOW_SECONDS) {
+          // Sending this would record the meal against today instead of the day
+          // it was eaten. A wrong row in the wrong meal week is invisible; an
+          // unsent one stays on the badge until somebody deals with it.
+          addUnrecorded(item, "Too old to record automatically — add it in Admin.");
+          continue;
+        }
+        let result;
+        try {
+          result = await post(item.path, item.body);
+        } catch (err) {
+          if (err.status) {
+            // The server answered and refused outright. Retrying will not change
+            // its mind, so stop carrying it and put it in front of staff.
+            addUnrecorded(item, err.message);
+            continue;
+          }
+          // Still unreachable. Keep this and everything after it for next time
+          // rather than working through a queue-length pile of doomed requests.
+          remaining.push(...items.slice(i));
+          break;
+        }
+        // A 200 is not proof the meal was recorded. unknown_credential,
+        // outside_service and guest_quota_exceeded all answer 200 with no row
+        // written, and dropping those on the floor is how a queued meal used to
+        // vanish with nothing left behind. attendance_id is the only honest
+        // signal — and it is present on already_checked_in too, where the row
+        // exists precisely because this scan already got through.
+        if (result && result.attendance_id) continue;
+        addUnrecorded(
+          item,
+          (result && result.message) || "The server did not record this scan."
+        );
       }
+      writeQueue(remaining);
+    } finally {
+      flushing = false;
     }
-    writeQueue(remaining);
   }
 
   setInterval(flushQueue, 20000);
   window.addEventListener("online", flushQueue);
+
+  /* What a queued meal is called if it ends up in front of staff. A card number
+   * is what identifies a check-in — there is no name to use, since being offline
+   * is exactly why the kiosk never learned one — while a guest and an alum were
+   * both typed in by somebody and can be called by name. */
+
+  function describeScan(body) {
+    return `${body.credential_type === "manual_puid" ? "ID" : "Card"} ${body.value}`;
+  }
+
+  function describeGuest(body) {
+    const who = `${body.guest_first_name} ${body.guest_last_name}`.trim() || "Guest";
+    return `Guest ${who}`;
+  }
+
+  function describeAlumni(body) {
+    const who = `${body.first_name} ${body.last_name}`.trim() || "Alum";
+    return `Alumni ${who}`;
+  }
+
+  /* ---------------- scans that could not be recorded ----------------
+   *
+   * The queue keeps a network blip from costing anyone a meal, and it does that
+   * by retrying. But some replays can never succeed: an unenrolled card, a quota
+   * the server refuses, a scan that sat in the queue past the day it belonged
+   * to. Those are the ones worth being loud about — they are meals somebody ate
+   * that the system has no row for, and the person who could fix it has usually
+   * gone home by the time anyone looks.
+   *
+   * So they are kept, with the reason, and the badge stays up until staff clear
+   * it. The kiosk never again decides on its own that a meal did not happen. */
+
+  const UNRECORDED_KEY = "colomeal.unrecorded.v1";
+
+  function addUnrecorded(item, reason) {
+    const items = readList(UNRECORDED_KEY);
+    items.push({
+      label: item.label || "A meal",
+      occurred_at: (item.body && item.body.occurred_at) || null,
+      reason: reason || "",
+    });
+    writeList(UNRECORDED_KEY, items);
+    renderUnrecorded();
+  }
+
+  function describeUnrecorded(item) {
+    const when = Date.parse(item.occurred_at || "");
+    const stamp = isNaN(when)
+      ? "time unknown"
+      : new Date(when).toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        });
+    return `${item.label} · ${stamp}`;
+  }
+
+  function renderUnrecorded() {
+    const items = readList(UNRECORDED_KEY);
+    const badge = el("unrecordedBadge");
+    if (badge) {
+      badge.hidden = items.length === 0;
+      badge.textContent =
+        items.length === 1 ? "1 scan not recorded" : `${items.length} scans not recorded`;
+    }
+    const list = el("unrecordedList");
+    if (!list) return;
+    list.innerHTML = "";
+    items.forEach((item) => {
+      const row = document.createElement("li");
+      row.className = "muted-row";
+      const who = document.createElement("span");
+      who.className = "who";
+      who.textContent = describeUnrecorded(item);
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = item.reason || "";
+      row.append(who, tag);
+      list.appendChild(row);
+    });
+  }
+
+  // Looked up lazily rather than held in a const: readerOwnsKeyboard() reaches
+  // this during setup, before a const declared down here would be initialized.
+  function unrecordedModalIsOpen() {
+    const modal = el("unrecordedModal");
+    return Boolean(modal) && !modal.hidden;
+  }
+
+  function openUnrecordedModal() {
+    if (guestModalIsOpen()) closeGuestModal();
+    if (alumniModalIsOpen()) closeAlumniModal();
+    // Same rule as the other two popups: what is behind this must not time out
+    // and vanish while somebody is reading it.
+    if (resultTimer) {
+      clearTimeout(resultTimer);
+      resultTimer = null;
+    }
+    renderUnrecorded();
+    el("unrecordedModal").hidden = false;
+    releaseReader();
+  }
+
+  function closeUnrecordedModal() {
+    el("unrecordedModal").hidden = true;
+    if (readerOwnsKeyboard()) claimReader();
+  }
+
+  el("unrecordedBadge").addEventListener("click", openUnrecordedModal);
+
+  el("unrecordedModal").addEventListener("click", (event) => {
+    const action = event.target.dataset.action;
+    if (action === "cancel") {
+      closeUnrecordedModal();
+    } else if (action === "clear") {
+      // Deliberately not offered until they have been read: the button sits
+      // under the list and says what clearing it means.
+      writeList(UNRECORDED_KEY, []);
+      renderUnrecorded();
+      closeUnrecordedModal();
+    }
+  });
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && unrecordedModalIsOpen()) closeUnrecordedModal();
+  });
 
   /* ---------------- scanning ---------------- */
 
@@ -229,7 +497,7 @@
         renderError(err.message);
         return;
       }
-      enqueue(payload);
+      enqueue("/api/scan", payload, describeScan(payload));
       renderQueued();
     }
   }
@@ -372,16 +640,21 @@
     resultTimer = setTimeout(backToIdle, CONFIG.resultSeconds * 1000);
   }
 
-  function renderQueued() {
+  function renderQueued(title) {
     lastResult = null;
     renderAnyway(null);
     setFallbackInitials("…");
-    setResultName("Saved offline", "");
+    setResultName(title || "Saved offline", "");
     el("resultMeta").textContent = "The server is unreachable right now.";
     el("resultWarnings").textContent = "";
     el("resultBand").className = "band info";
     el("resultMessage").textContent = "Your meal is recorded and will sync automatically.";
-    el("guestBtn").hidden = true;
+    // The one action still available offline. The kiosk never learned who this
+    // card belongs to — that is what being offline means — but it does not need
+    // to: the card itself names the host, and the server resolves it on replay
+    // exactly as it would have at the door. Without this a guest arriving during
+    // an outage has no way in at all, since the host search needs the server.
+    el("guestBtn").hidden = !lastScan;
     el("undoBtn").hidden = true;
     el("enrollLink").hidden = true;
     show("result");
@@ -532,11 +805,18 @@
    * A guest is recorded by name *and* NetID — or, for a guest who has none, by
    * a stated reason in its place. The kiosk checks the fields before it posts
    * and the server checks them again; the popup's copy of the rule is there to
-   * answer instantly, not to be the rule. */
+   * answer instantly, not to be the rule.
+   *
+   * The host is held one of two ways, because offline there is no other option.
+   * `guestHost` is a member the server resolved. `guestHostCard` is the raw card
+   * the host tapped, which is all the kiosk has when that tap was queued rather
+   * than answered — the server resolves it on replay, by the same means it would
+   * have used at the door. Exactly one of the two is ever set. */
 
   const guestModal = el("guestModal");
   const guestHostQuery = el("guestHostQuery");
   let guestHost = null; // { id, full_name, puid }
+  let guestHostCard = null; // { value, credentialType }
   let guestSearchTimer = null;
 
   function guestModalIsOpen() {
@@ -592,16 +872,41 @@
 
   function setGuestHost(member, guests) {
     guestHost = member || null;
-    const chosen = el("guestHostChosen");
-    chosen.hidden = !guestHost;
-    guestHostQuery.hidden = Boolean(guestHost);
-    el("guestHostResults").hidden = Boolean(guestHost);
+    if (guestHost) guestHostCard = null;
+    renderGuestHost();
+    renderGuestQuota(guests || null);
+  }
+
+  /* The offline host: a card, with nobody's name attached to it yet. Named
+   * rather than searched for, because the search endpoint is the one thing that
+   * definitely is not answering. */
+  function setGuestHostCard(scan) {
+    guestHostCard = scan ? { value: scan.value, credentialType: scan.credentialType } : null;
+    if (guestHostCard) guestHost = null;
+    renderGuestHost();
+    // The quota lives on the server and the server is not talking. Saying
+    // nothing is the honest answer; guessing would be worse, and the meal is
+    // checked against the real quota when it replays.
+    renderGuestQuota(null);
+  }
+
+  function renderGuestHost() {
+    const known = Boolean(guestHost || guestHostCard);
+    el("guestHostChosen").hidden = !known;
+    guestHostQuery.hidden = known;
+    el("guestHostResults").hidden = known;
+    if (!known) return;
+    clearGuestHostResults();
     if (guestHost) {
       el("guestHostName").textContent = guestHost.full_name;
       el("guestHostPuid").textContent = "PUID " + guestHost.puid;
-      clearGuestHostResults();
+    } else {
+      // No name to show — the tap that would have produced one is sitting in the
+      // queue. The card is what staff can check against the person in front of
+      // them, so the card is what it says.
+      el("guestHostName").textContent = "The card just tapped";
+      el("guestHostPuid").textContent = guestHostCard.value;
     }
-    renderGuestQuota(guests || null);
   }
 
   function openGuestModal(options) {
@@ -633,16 +938,21 @@
     clearGuestHostResults();
     setGuestError("");
     guestModal.hidden = false;
-    setGuestHost(opts.host || null, opts.guests || null);
+    if (opts.hostCard) {
+      setGuestHostCard(opts.hostCard);
+    } else {
+      setGuestHost(opts.host || null, opts.guests || null);
+    }
     // The popup is all typing, so the reader gives up the keyboard for as long
     // as it is open.
     releaseReader();
-    (guestHost ? el("guestFirstName") : guestHostQuery).focus();
+    (guestHost || guestHostCard ? el("guestFirstName") : guestHostQuery).focus();
   }
 
   function closeGuestModal() {
     guestModal.hidden = true;
     guestHost = null;
+    guestHostCard = null;
     clearGuestHostResults();
     setGuestError("");
     if (guestSearchTimer) {
@@ -670,7 +980,13 @@
       const response = await fetch("/api/members/search?q=" + encodeURIComponent(term));
       members = await response.json();
     } catch (err) {
-      setGuestError("Could not search members — the server is unreachable.");
+      // The way through this is on the idle screen, not in here: a host who taps
+      // their own card gets queued, and the "+ Guest" button on that result
+      // opens this popup with the card already standing in for the member.
+      setGuestError(
+        "Could not search members — the server is unreachable. " +
+          "Ask the host to tap their card, then use “+ Guest”."
+      );
       return;
     }
     list.innerHTML = "";
@@ -716,8 +1032,14 @@
   el("guestMealBtn").addEventListener("click", () => openGuestModal({}));
 
   el("guestBtn").addEventListener("click", () => {
-    if (!lastResult || !lastResult.member) return;
-    openGuestModal({ host: lastResult.member, guests: lastResult.guests });
+    if (lastResult && lastResult.member) {
+      openGuestModal({ host: lastResult.member, guests: lastResult.guests });
+    } else if (lastScan) {
+      // Offline: the check-in behind this screen is still in the queue, so there
+      // is no member to name — but the card that produced it is the same thing
+      // the server would have resolved, and it can resolve it on replay.
+      openGuestModal({ hostCard: lastScan });
+    }
   });
 
   /* ---- closing and submitting ---- */
@@ -731,7 +1053,7 @@
   });
 
   el("guestSubmit").addEventListener("click", async () => {
-    if (!guestHost) {
+    if (!guestHost && !guestHostCard) {
       setGuestError("Choose the member hosting this guest.");
       guestHostQuery.focus();
       return;
@@ -761,12 +1083,21 @@
 
     const needsOverride = !el("guestOverride").hidden;
     const body = {
-      member_id: guestHost.id,
       guest_first_name: first,
       guest_last_name: last,
       guest_netid: guestNoNetid.checked ? "" : netid,
       guest_netid_reason: guestNoNetid.checked ? netidReason : "",
+      occurred_at: new Date().toISOString(),
     };
+    // Exactly one of the two, never both: the route reads member_id first, and
+    // sending a stale card alongside it would be a second opinion nobody asked
+    // for.
+    if (guestHost) {
+      body.member_id = guestHost.id;
+    } else {
+      body.host_value = guestHostCard.value;
+      body.host_credential_type = guestHostCard.credentialType;
+    }
     if (needsOverride) {
       body.staff_pin = el("guestPin").value;
       body.override_reason = el("guestReason").value;
@@ -784,7 +1115,17 @@
       closeGuestModal();
       renderResult(result);
     } catch (err) {
-      setGuestError(err.message);
+      if (err.status) {
+        // The server answered and refused. Stay put — everything typed is still
+        // correct apart from the one thing it named.
+        setGuestError(err.message);
+        return;
+      }
+      // Unreachable. The guest is standing there and the host has already been
+      // identified, so the meal is taken now and settled later.
+      enqueue("/api/guest", body, describeGuest(body));
+      closeGuestModal();
+      renderQueued("Guest saved offline");
     }
   });
 
@@ -898,21 +1239,34 @@
       return;
     }
 
+    const body = {
+      first_name: first,
+      last_name: last,
+      class_year: Number(classYear),
+      email: email,
+      phone: phone,
+      netid: netid,
+      occurred_at: new Date().toISOString(),
+    };
+
     try {
-      const result = await post("/api/alumni", {
-        first_name: first,
-        last_name: last,
-        class_year: Number(classYear),
-        email: email,
-        phone: phone,
-        netid: netid,
-      });
+      const result = await post("/api/alumni", body);
       closeAlumniModal();
       renderResult(result);
     } catch (err) {
-      // Stay in the popup: everything typed is still correct apart from the one
-      // field the server named.
-      setAlumniError(err.message);
+      if (err.status) {
+        // Stay in the popup: everything typed is still correct apart from the
+        // one field the server named.
+        setAlumniError(err.message);
+        return;
+      }
+      // Unreachable. An alumni meal is the one that most needs queuing rather
+      // than refusing: it is on nobody's account and leaves no card behind, so
+      // an alum turned away here is a meal that no later reconciliation could
+      // ever reconstruct.
+      enqueue("/api/alumni", body, describeAlumni(body));
+      closeAlumniModal();
+      renderQueued("Alumni meal saved offline");
     }
   });
 
@@ -1094,7 +1448,9 @@
 
   connectBridge();
 
+  migrateLegacyQueue();
   writeQueue(readQueue());
+  renderUnrecorded();
   flushQueue();
   focusReader();
 })();

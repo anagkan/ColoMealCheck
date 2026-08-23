@@ -28,6 +28,11 @@
     </div>
     <div class="bar-right">
       <span id="offlineBadge" class="offline" hidden></span>
+      <!-- Meals that were eaten but never got a row: a card that turned out not
+           to be enrolled, a queued scan the server refused, one that sat past
+           the day it belonged to. Clickable, because a count nobody can act on
+           is just a nag. -->
+      <button type="button" id="unrecordedBadge" class="offline alert" hidden></button>
       <!-- Only meaningful on a kiosk using the PC/SC bridge; a wedge reader
            never sets bridgeUrl and this stays hidden forever. A dead bridge
            means cards silently stop working, so it has to be visible. -->
@@ -291,6 +296,30 @@
       <div class="panel-actions">
         <button id="alumniSubmit" class="action-btn">Record alumni meal</button>
         <button class="action-btn subtle" data-action="cancel">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Opened from the badge in the header. Read-only on purpose: the kiosk
+       cannot record these itself — that is exactly why they are here — so its
+       job is to say what was missed clearly enough that an admin can enter it,
+       and then to keep saying it until somebody has. -->
+  <div id="unrecordedModal" class="modal-backdrop" hidden>
+    <div class="modal panel" role="dialog" aria-modal="true"
+         aria-labelledby="unrecordedModalTitle">
+      <h2 id="unrecordedModalTitle">Scans That Were Not Recorded</h2>
+      <p class="sub small">
+        These meals were taken while the kiosk was offline, and the server would
+        not accept them when it came back. Add them from Admin → Attendance.
+      </p>
+
+      <ul id="unrecordedList" class="search-results"></ul>
+
+      <div class="panel-actions">
+        <button class="action-btn subtle" data-action="cancel">Close</button>
+        <button class="action-btn subtle" data-action="clear">
+          Clear list — these have been entered
+        </button>
       </div>
     </div>
   </div>

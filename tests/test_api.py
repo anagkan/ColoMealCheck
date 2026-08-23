@@ -5,7 +5,7 @@ rather than in front of a club officer.
 """
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -313,6 +313,37 @@ class TestScanApi:
         ).json()
         if body["service_date"]:
             assert not body["service_date"].startswith("2019")
+
+    def test_a_stale_replay_says_so_rather_than_quietly_moving_the_meal(
+        self, client, member, wide_service, db
+    ):
+        """Substituting server time is right; doing it silently was not.
+
+        The meal lands in today's service date and today's meal week, spending an
+        allotment that belongs to another week entirely. That is invisible in the
+        row itself, so it has to be visible somewhere — on the screen for whoever
+        is standing there, and in the audit log for whoever is not.
+        """
+        body = client.post(
+            "/api/scan",
+            json={"value": "04A1B2C3D4E5F601", "occurred_at": "2019-01-01T12:00:00+00:00"},
+        ).json()
+
+        assert any("not usable" in warning for warning in body["warnings"]), body["warnings"]
+
+        entry = db.query(AuditLog).filter(AuditLog.action == "attendance.untrusted_time").one()
+        assert entry.entity_id == body["attendance_id"]
+        assert entry.detail["claimed_at"].startswith("2019")
+
+    def test_an_ordinary_scan_is_not_accused_of_a_bad_clock(
+        self, client, member, wide_service, db
+    ):
+        """The warning has to stay rare or it stops meaning anything."""
+        body = client.post("/api/scan", json={"value": "04A1B2C3D4E5F601"}).json()
+        assert not any("not usable" in warning for warning in body["warnings"])
+        assert db.query(AuditLog).filter(
+            AuditLog.action == "attendance.untrusted_time"
+        ).count() == 0
 
     def test_forcing_a_second_meal_needs_authorization(self, client, member, wide_service):
         client.post("/api/scan", json={"value": "04A1B2C3D4E5F601"})
@@ -628,6 +659,81 @@ class TestGuestApi:
             **extra,
         }
 
+    def test_a_host_can_be_named_by_their_card_instead_of_an_id(
+        self, client, member, wide_service
+    ):
+        """The offline path: the kiosk queued the host's own tap and never got a
+        member back, so the card is the only thing it has to name them with."""
+        body = client.post(
+            "/api/guest",
+            json={
+                "host_value": "04A1B2C3D4E5F601",
+                "guest_first_name": "Kim",
+                "guest_last_name": "Adeyemi",
+                "guest_netid": "kadeyemi",
+            },
+        ).json()
+        assert body["outcome"] == "guest_recorded"
+        # Resolved to the same host an id would have named.
+        assert body["member"]["id"] == member.id
+
+    def test_a_host_can_be_named_by_a_typed_puid(self, client, member, wide_service):
+        body = client.post(
+            "/api/guest",
+            json={
+                "host_value": member.puid,
+                "host_credential_type": "manual_puid",
+                "guest_first_name": "Kim",
+                "guest_last_name": "Adeyemi",
+                "guest_netid": "kadeyemi",
+            },
+        ).json()
+        assert body["outcome"] == "guest_recorded"
+        assert body["member"]["id"] == member.id
+
+    def test_a_host_card_nobody_owns_is_refused(self, client, member, wide_service):
+        refused = client.post(
+            "/api/guest",
+            json={
+                "host_value": "NOSUCHCARD",
+                "guest_first_name": "Kim",
+                "guest_last_name": "Adeyemi",
+                "guest_netid": "kadeyemi",
+            },
+        )
+        assert refused.status_code == 404
+        assert "not recognized" in refused.json()["detail"]
+
+    def test_a_guest_meal_with_no_host_at_all_is_refused(self, client, wide_service):
+        refused = client.post(
+            "/api/guest",
+            json={
+                "guest_first_name": "Kim",
+                "guest_last_name": "Adeyemi",
+                "guest_netid": "kadeyemi",
+            },
+        )
+        assert refused.status_code == 422
+        assert "hosting" in refused.json()["detail"]
+
+    def test_a_replayed_guest_meal_keeps_the_time_it_was_eaten(
+        self, client, member, db, wide_service
+    ):
+        """A guest meal queued during dinner and synced an hour later belongs to
+        dinner, not to whenever the network came back."""
+        eaten_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        body = client.post(
+            "/api/guest",
+            json=self.guest(member, occurred_at=eaten_at.isoformat()),
+        ).json()
+        assert body["outcome"] == "guest_recorded"
+
+        row = db.get(Attendance, body["attendance_id"])
+        recorded = row.scanned_at
+        if recorded.tzinfo is None:
+            recorded = recorded.replace(tzinfo=timezone.utc)
+        assert abs((recorded - eaten_at).total_seconds()) < 2
+
     def test_guest_blocked_at_quota_then_released_by_override(self, client, member, wide_service):
         for first, last, netid in (("Sam", "Ortiz", "sortiz"), ("Jess", "Nakamura", "jn")):
             body = client.post(
@@ -750,6 +856,23 @@ class TestAlumniApi:
             "email": "casey@example.com",
             **extra,
         }
+
+    def test_a_replayed_alumni_meal_keeps_the_time_it_was_eaten(
+        self, client, db, wide_service
+    ):
+        """The queue's whole point: an alum who ate at dinner is recorded at
+        dinner, whenever the kiosk finally manages to say so."""
+        eaten_at = datetime.now(timezone.utc) - timedelta(hours=1)
+        body = client.post(
+            "/api/alumni", json=self.alum(occurred_at=eaten_at.isoformat())
+        ).json()
+        assert body["outcome"] == "alumni_recorded"
+
+        row = db.get(Attendance, body["attendance_id"])
+        recorded = row.scanned_at
+        if recorded.tzinfo is None:
+            recorded = recorded.replace(tzinfo=timezone.utc)
+        assert abs((recorded - eaten_at).total_seconds()) < 2
 
     def test_it_records_the_meal_against_no_member(self, client, db, wide_service):
         response = client.post("/api/alumni", json=self.alum())
