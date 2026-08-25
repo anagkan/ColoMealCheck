@@ -394,6 +394,38 @@ and members can eat immediately by typing their ID at the kiosk while cards get
 linked over the first week or two. `/admin/reports` has an **enrollment gaps**
 list — active members with no card linked — which is the list to work through.
 
+### Importing the roster from a spreadsheet
+
+The club has the roster as a sheet long before it has any card serials, so
+`/admin/members/import` (admin only) takes a CSV of everything *except* the
+card. Required columns are `first_name`, `last_name` and `puid`; `netid`,
+`class_year`, `plan_type` and `status` are optional, and a blank one falls back
+to the same defaults the "Add a member" form offers. Header spelling is
+forgiving — "First Name", "NetID" and "Class Year" all match — and any column
+the importer does not recognise is listed as ignored rather than treated as an
+error.
+
+Uploading previews; it does not write. The screen shows what would be added,
+what would be updated and with which values, what already matches, and every
+row it cannot use with the reason why — a malformed PUID, a NetID somebody else
+holds, a plan name that is not a plan. Only a second click imports, and the
+plan is recomputed against the database at that moment rather than trusted from
+the preview. Rows with problems are skipped, not fatal: a file with three bad
+lines and two hundred good ones imports the two hundred.
+
+Rows are matched to members by PUID, which makes a re-upload safe. Uploading
+the same file twice changes nothing; uploading a corrected one updates only the
+cells that differ. A blank cell for somebody already on file leaves that value
+alone rather than clearing it, because rosters arrive half-filled and a missing
+NetID column must not wipe the NetIDs collected at the kiosk. Credentials and
+photos are never touched by an import.
+
+There is deliberately **no card column**. A CSN is bound to a member at the
+kiosk, where somebody is standing there to confirm whose card it is — so
+everyone imported this way lands on the enrollment-gaps list and taps in over
+the following week. Each import writes one `roster.imported` entry to the audit
+log with the filename and the counts.
+
 ---
 
 ## Analytics

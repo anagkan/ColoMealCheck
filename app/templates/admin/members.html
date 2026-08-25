@@ -16,6 +16,13 @@
   </form>
 </header>
 
+{% if user and user.is_admin %}
+  <p class="muted small">
+    Have the roster as a spreadsheet? <a href="/admin/members/import">Import a CSV</a> —
+    names, PUIDs and plans go in now, cards get linked at the kiosk later.
+  </p>
+{% endif %}
+
 <details class="card">
   <summary>Add a member</summary>
   <form method="post" action="/admin/members" class="form-grid">

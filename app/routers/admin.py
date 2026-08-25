@@ -25,6 +25,7 @@ from app.services import credentials as credential_service
 from app.services import netid as netid_service
 from app.services import photos as photo_service
 from app.services import reports
+from app.services import roster_import
 from app.services.club_settings import load_config, set_value
 from app.services.allotment import weekly_usage
 from app.services.guests import guest_usage
@@ -183,6 +184,116 @@ def create_member(
         detail={"puid": member.puid, "netid": member.netid},
     )
     return RedirectResponse(f"/admin/members/{member.id}", status_code=303)
+
+
+# --------------------------------------------------------------------------
+# Roster import
+#
+# Declared above /members/{member_id} on purpose: FastAPI matches in
+# declaration order, and "import" would otherwise be handed to that route as a
+# member id and rejected as a bad integer.
+# --------------------------------------------------------------------------
+
+
+@router.get("/members/import")
+def import_form(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_admin),
+):
+    return templates.TemplateResponse(
+        request,
+        "admin/member_import.html",
+        {
+            "user": user,
+            "plan": None,
+            "csv_text": "",
+            "filename": "",
+            "error": None,
+            "result": None,
+            "known_fields": roster_import.KNOWN_FIELDS,
+        },
+    )
+
+
+@router.post("/members/import")
+async def import_preview(
+    request: Request,
+    upload: UploadFile | None = None,
+    csv_text: str = Form(""),
+    filename: str = Form(""),
+    confirm: str = Form(""),
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_admin),
+):
+    """Preview an uploaded roster, or commit the one already previewed.
+
+    Both halves live in one route because they are one decision. The first POST
+    carries a file and gets a plan back; the second carries that same file's
+    text and `confirm`, and only then does anything get written. The plan is
+    recomputed from the text on the way in, so what commits is measured against
+    the database as it is now, not as it was when the preview rendered.
+    """
+    text = csv_text
+    name = filename
+    if upload is not None and upload.filename:
+        text = ""
+        name = upload.filename
+        try:
+            text = roster_import.decode(await upload.read())
+        except roster_import.RosterImportError as exc:
+            return _import_page(request, user, error=str(exc))
+
+    if not text.strip():
+        return _import_page(request, user, error="Choose a CSV file to upload.")
+
+    try:
+        parsed = roster_import.plan(db, text)
+    except roster_import.RosterImportError as exc:
+        return _import_page(request, user, error=str(exc), csv_text=text, filename=name)
+
+    if not confirm:
+        return _import_page(request, user, plan=parsed, csv_text=text, filename=name)
+
+    result = roster_import.apply(db, parsed)
+    audit_service.record(
+        db,
+        actor=f"staff:{user.username}",
+        action="roster.imported",
+        detail={
+            "filename": name,
+            "created": len(result.created),
+            "updated": len(result.updated),
+            "unchanged": result.unchanged,
+            "skipped": result.skipped,
+            "member_ids": result.created + result.updated,
+        },
+    )
+    return _import_page(request, user, result=result, plan=parsed)
+
+
+def _import_page(
+    request: Request,
+    user: StaffUser,
+    plan=None,
+    csv_text: str = "",
+    filename: str = "",
+    error: str | None = None,
+    result=None,
+):
+    return templates.TemplateResponse(
+        request,
+        "admin/member_import.html",
+        {
+            "user": user,
+            "plan": plan,
+            "csv_text": csv_text,
+            "filename": filename,
+            "error": error,
+            "result": result,
+            "known_fields": roster_import.KNOWN_FIELDS,
+        },
+    )
 
 
 @router.get("/members/{member_id}")

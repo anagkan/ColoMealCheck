@@ -189,6 +189,16 @@ form { margin: 0; }
 
 details summary { cursor: pointer; font-weight: 600; margin-bottom: 0.75rem; }
 
+/* The raw roster CSV carried between the import preview and the confirm POST.
+   Monospaced and scrollable, because the point of showing it is that staff can
+   check a suspect line number against the file they picked. */
+.raw-csv {
+  width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem; white-space: pre; overflow: auto; background: var(--bg);
+}
+.import-help code { font-size: 0.85em; background: var(--bg); padding: 0 0.25em;
+                    border-radius: 4px; }
+
 /* ---------- analytics ---------- */
 
 .filters {
