@@ -47,10 +47,23 @@ so any of these swaps in without touching the rules engine or the schema.
 ```bash
 cp .env.example .env
 # Set SECRET_KEY (the file gives you the command), POSTGRES_PASSWORD,
-# and STAFF_PIN. Then:
+# STAFF_PIN, and ADMIN_PASSWORD. Then:
 docker compose up -d
-docker compose logs api        # the first-boot admin password prints here once
 ```
+
+`ADMIN_USERNAME` and `ADMIN_PASSWORD` are the admin login for `/admin`. They are
+read on **every** boot, so changing the password is: edit `.env`, then
+`docker compose up -d`. That is currently the only way to change it — the app
+has no screen that does. Changing `ADMIN_USERNAME` renames the account rather
+than leaving a second admin behind.
+
+Leave `ADMIN_PASSWORD` blank and the first boot generates one instead and prints
+it to `docker compose logs api`, once; the account is then left alone on later
+boots. (`BOOTSTRAP_ADMIN_USERNAME` and `BOOTSTRAP_ADMIN_PASSWORD` were the
+earlier names for these and still work.)
+
+Anyone who can read `.env` can sign in as an admin, so it belongs on the server
+and not on the kiosk laptop. `.gitignore` already excludes it.
 
 The app is at `http://<server-host>:8000`:
 
@@ -127,7 +140,7 @@ The image is private, so pulling it needs a GitHub token with `read:packages`:
 ```bash
 docker login ghcr.io -u <your-github-username>
 docker compose -f docker-compose.deploy.yml up -d
-docker compose -f docker-compose.deploy.yml logs api   # admin password, once
+docker compose -f docker-compose.deploy.yml logs api   # admin password, if generated
 ```
 
 Access is governed by this repository's collaborator list rather than a
@@ -465,7 +478,7 @@ never eaten here is not the most recently seen.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 npm ci                            # jsdom, for the browser JavaScript tests
-.venv/bin/python -m pytest        # 380 tests, ~35s
+.venv/bin/python -m pytest        # 424 tests, ~35s
 ```
 
 Tests run against SQLite, which honours the same partial unique indexes used on
@@ -540,7 +553,7 @@ app/
   static/sw.js        service worker: boots the door screen without the server
   static/manifest.webmanifest
 bridge/               PC/SC fallback for a reader that cannot type
-tests/                380 tests; start with test_scan_rules.py
+tests/                424 tests; start with test_scan_rules.py
 ```
 
 Schema changes: edit `app/models.py`, then
