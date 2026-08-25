@@ -47,10 +47,23 @@ so any of these swaps in without touching the rules engine or the schema.
 ```bash
 cp .env.example .env
 # Set SECRET_KEY (the file gives you the command), POSTGRES_PASSWORD,
-# and STAFF_PIN. Then:
+# STAFF_PIN, and ADMIN_PASSWORD. Then:
 docker compose up -d
-docker compose logs api        # the first-boot admin password prints here once
 ```
+
+`ADMIN_USERNAME` and `ADMIN_PASSWORD` are the admin login for `/admin`. They are
+read on **every** boot, so changing the password is: edit `.env`, then
+`docker compose up -d`. That is currently the only way to change it — the app
+has no screen that does. Changing `ADMIN_USERNAME` renames the account rather
+than leaving a second admin behind.
+
+Leave `ADMIN_PASSWORD` blank and the first boot generates one instead and prints
+it to `docker compose logs api`, once; the account is then left alone on later
+boots. (`BOOTSTRAP_ADMIN_USERNAME` and `BOOTSTRAP_ADMIN_PASSWORD` were the
+earlier names for these and still work.)
+
+Anyone who can read `.env` can sign in as an admin, so it belongs on the server
+and not on the kiosk laptop. `.gitignore` already excludes it.
 
 The app is at `http://<server-host>:8000`:
 
@@ -63,6 +76,13 @@ The app is at `http://<server-host>:8000`:
 
 Two containers, no reverse proxy: Uvicorn serves the API, the pages and the
 photos directly. Postgres and the photo directory are on named volumes.
+
+That is the picture when the server and the kiosk share a LAN. For the real
+deployment — the stack on a server, the kiosk a Chromebook on a different
+network, the two joined over Tailscale — see [`DEPLOYMENT.md`](DEPLOYMENT.md).
+It differs in more than the network: a Chromebook cannot be given Chrome's
+command-line flags, so the kiosk there needs genuine HTTPS rather than the
+insecure-origin exception `run-kiosk.sh` relies on below.
 
 ### Enrollment
 
@@ -127,7 +147,7 @@ The image is private, so pulling it needs a GitHub token with `read:packages`:
 ```bash
 docker login ghcr.io -u <your-github-username>
 docker compose -f docker-compose.deploy.yml up -d
-docker compose -f docker-compose.deploy.yml logs api   # admin password, once
+docker compose -f docker-compose.deploy.yml logs api   # admin password, if generated
 ```
 
 Access is governed by this repository's collaborator list rather than a
@@ -394,6 +414,38 @@ and members can eat immediately by typing their ID at the kiosk while cards get
 linked over the first week or two. `/admin/reports` has an **enrollment gaps**
 list — active members with no card linked — which is the list to work through.
 
+### Importing the roster from a spreadsheet
+
+The club has the roster as a sheet long before it has any card serials, so
+`/admin/members/import` (admin only) takes a CSV of everything *except* the
+card. Required columns are `first_name`, `last_name` and `puid`; `netid`,
+`class_year`, `plan_type` and `status` are optional, and a blank one falls back
+to the same defaults the "Add a member" form offers. Header spelling is
+forgiving — "First Name", "NetID" and "Class Year" all match — and any column
+the importer does not recognise is listed as ignored rather than treated as an
+error.
+
+Uploading previews; it does not write. The screen shows what would be added,
+what would be updated and with which values, what already matches, and every
+row it cannot use with the reason why — a malformed PUID, a NetID somebody else
+holds, a plan name that is not a plan. Only a second click imports, and the
+plan is recomputed against the database at that moment rather than trusted from
+the preview. Rows with problems are skipped, not fatal: a file with three bad
+lines and two hundred good ones imports the two hundred.
+
+Rows are matched to members by PUID, which makes a re-upload safe. Uploading
+the same file twice changes nothing; uploading a corrected one updates only the
+cells that differ. A blank cell for somebody already on file leaves that value
+alone rather than clearing it, because rosters arrive half-filled and a missing
+NetID column must not wipe the NetIDs collected at the kiosk. Credentials and
+photos are never touched by an import.
+
+There is deliberately **no card column**. A CSN is bound to a member at the
+kiosk, where somebody is standing there to confirm whose card it is — so
+everyone imported this way lands on the enrollment-gaps list and taps in over
+the following week. Each import writes one `roster.imported` entry to the audit
+log with the filename and the counts.
+
 ---
 
 ## Analytics
@@ -433,7 +485,7 @@ never eaten here is not the most recently seen.
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 npm ci                            # jsdom, for the browser JavaScript tests
-.venv/bin/python -m pytest        # 380 tests, ~35s
+.venv/bin/python -m pytest        # 424 tests, ~35s
 ```
 
 Tests run against SQLite, which honours the same partial unique indexes used on
@@ -508,7 +560,7 @@ app/
   static/sw.js        service worker: boots the door screen without the server
   static/manifest.webmanifest
 bridge/               PC/SC fallback for a reader that cannot type
-tests/                380 tests; start with test_scan_rules.py
+tests/                424 tests; start with test_scan_rules.py
 ```
 
 Schema changes: edit `app/models.py`, then

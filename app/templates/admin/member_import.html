@@ -1,0 +1,216 @@
+{% extends "admin/base.html" %}
+{% block title %}Import roster{% endblock %}
+{% block content %}
+
+<header class="page-head">
+  <div>
+    <h1>Import roster</h1>
+    <p class="muted">A CSV of member details. Cards are linked later, at the kiosk.</p>
+  </div>
+  <a class="btn" href="/admin/members">Back to members</a>
+</header>
+
+{% if error %}
+  <div class="notice alert">{{ error }}</div>
+{% endif %}
+
+{% if result %}
+  <div class="notice">
+    <strong>Import complete.</strong> {{ result.summary }}
+    {% if result.skipped %}
+      The skipped rows were not written — fix them in the sheet and upload it again.
+    {% endif %}
+  </div>
+  <p class="muted small">
+    Everyone imported is on the
+    <a href="/admin/reports">not-yet-enrolled list</a> until they tap a card at the kiosk.
+    Until then they check in by typing their PUID.
+  </p>
+{% endif %}
+
+{% if plan is none %}
+<section class="card">
+  <h2>Choose a file</h2>
+  <form method="post" action="/admin/members/import" enctype="multipart/form-data" class="inline">
+    <label>CSV file <input type="file" name="upload" accept=".csv,text/csv" required></label>
+    <button class="primary" type="submit">Preview</button>
+  </form>
+  <p class="muted small">
+    Nothing is written until you have seen what would change and confirmed it.
+  </p>
+
+  <h2 style="margin-top:1.5rem">Columns</h2>
+  <table class="grid tight">
+    <thead><tr><th>Column</th><th>Required</th><th>Notes</th></tr></thead>
+    <tbody>
+      <tr><td>first_name</td><td><span class="chip warn">yes</span></td><td></td></tr>
+      <tr><td>last_name</td><td><span class="chip warn">yes</span></td><td></td></tr>
+      <tr><td>puid</td><td><span class="chip warn">yes</span></td>
+          <td>Nine digits. This is what matches a row to a member on re-upload.</td></tr>
+      <tr><td>netid</td><td><span class="chip info">optional</span></td>
+          <td>2–8 letters and digits, starting with a letter. Must be unique.</td></tr>
+      <tr><td>class_year</td><td><span class="chip info">optional</span></td><td>Like 2028.</td></tr>
+      <tr><td>plan_type</td><td><span class="chip info">optional</span></td>
+          <td><code>plan_19</code>, <code>plan_14</code>, <code>rca_paa</code> or
+              <code>none</code>. Blank means the 19-meal plan.</td></tr>
+      <tr><td>status</td><td><span class="chip info">optional</span></td>
+          <td><code>active</code>, <code>inactive</code>, <code>leave</code>,
+              <code>abroad</code> or <code>alum</code>. Blank means active.</td></tr>
+    </tbody>
+  </table>
+  <p class="muted small">
+    Header spelling is forgiving — "First Name", "NetID" and "Class Year" all match. Any
+    other column is ignored. There is no card column: a CSN is bound to a member at the
+    kiosk, where somebody is standing there to confirm whose card it is.
+  </p>
+  <p class="muted small">
+    Uploading a corrected file later updates the members it matches by PUID and adds the
+    ones it does not. A blank cell on somebody already on file leaves that value alone
+    rather than clearing it.
+  </p>
+</section>
+{% endif %}
+
+{% if plan is not none %}
+<div class="tiles">
+  <div class="tile">
+    <div class="tile-label">{% if result %}Added{% else %}To add{% endif %}</div>
+    <div class="tile-value">{{ plan.creates | length }}</div>
+  </div>
+  <div class="tile">
+    <div class="tile-label">{% if result %}Updated{% else %}To update{% endif %}</div>
+    <div class="tile-value">{{ plan.updates | length }}</div>
+  </div>
+  <div class="tile">
+    <div class="tile-label">Already matched</div>
+    <div class="tile-value">{{ plan.unchanged | length }}</div>
+  </div>
+  <div class="tile">
+    <div class="tile-label">{% if result %}Skipped{% else %}Problems{% endif %}</div>
+    <div class="tile-value {% if plan.errors %}over{% endif %}">{{ plan.errors | length }}</div>
+  </div>
+</div>
+
+{% if not result %}
+<section class="card">
+  {# The file itself rides along in a textarea rather than being parked in a
+     session: confirming re-posts the same bytes, and the plan is recomputed
+     from them against the database as it stands at that moment. #}
+  <form method="post" action="/admin/members/import">
+    <div class="card-head">
+      <h2>{% if filename %}{{ filename }}{% else %}Preview{% endif %}</h2>
+      <button class="primary" type="submit" {% if not plan.writes %}disabled{% endif %}>
+        {% if plan.writes %}Import {{ plan.writes }} row(s){% else %}Nothing to import{% endif %}
+      </button>
+    </div>
+    <input type="hidden" name="filename" value="{{ filename }}">
+    <input type="hidden" name="confirm" value="1">
+    <details>
+      <summary class="small muted">File contents</summary>
+      <textarea name="csv_text" readonly rows="10" class="raw-csv">{{ csv_text }}</textarea>
+    </details>
+  </form>
+  {% if plan.errors %}
+    <p class="muted small">
+      The {{ plan.errors | length }} row(s) below with problems will be skipped. The rest
+      still import — you can fix those rows and upload the file again.
+    </p>
+  {% endif %}
+  {% if plan.ignored_columns %}
+    <p class="muted small">
+      Ignored column(s): {{ plan.ignored_columns | join(', ') }}.
+    </p>
+  {% endif %}
+</section>
+{% endif %}
+
+{% if plan.errors %}
+<section class="card">
+  <h2>Problems ({{ plan.errors | length }})</h2>
+  <table class="grid tight">
+    <thead><tr><th>Line</th><th>Row</th><th>Problem</th></tr></thead>
+    <tbody>
+      {% for row in plan.errors %}
+      <tr>
+        <td class="num">{{ row.line }}</td>
+        <td>{{ row.name or '—' }}{% if row.puid %} <span class="muted">({{ row.puid }})</span>{% endif %}</td>
+        <td>{{ row.errors | join(' ') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if plan.creates %}
+<section class="card">
+  <h2>{% if result %}Added{% else %}To add{% endif %} ({{ plan.creates | length }})</h2>
+  <table class="grid tight">
+    <thead>
+      <tr><th>Line</th><th>Name</th><th>PUID</th><th>NetID</th><th>Year</th>
+          <th>Plan</th><th>Status</th></tr>
+    </thead>
+    <tbody>
+      {% for row in plan.creates %}
+      <tr>
+        <td class="num">{{ row.line }}</td>
+        <td>{{ row.name }}</td>
+        <td class="num">{{ row.puid }}</td>
+        <td>{{ row.values.netid or '—' }}</td>
+        <td class="num">{{ row.values.class_year or '—' }}</td>
+        <td>{{ row.values.plan_type | planlabel }}</td>
+        <td>{{ row.values.status }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if plan.updates %}
+<section class="card">
+  <h2>{% if result %}Updated{% else %}To update{% endif %} ({{ plan.updates | length }})</h2>
+  <table class="grid tight">
+    <thead><tr><th>Line</th><th>Member</th><th>Changes</th></tr></thead>
+    <tbody>
+      {% for row in plan.updates %}
+      <tr>
+        <td class="num">{{ row.line }}</td>
+        <td>
+          {% if row.member_id %}
+            <a href="/admin/members/{{ row.member_id }}">{{ row.name }}</a>
+          {% else %}{{ row.name }}{% endif %}
+          <span class="muted">({{ row.puid }})</span>
+        </td>
+        <td>
+          {% for field, pair in row.changes.items() %}
+            <div class="small">
+              {{ field }}: <span class="muted">{{ pair[0] }}</span> → <strong>{{ pair[1] }}</strong>
+            </div>
+          {% endfor %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if plan.unchanged and not result %}
+<section class="card">
+  <h2>Already match ({{ plan.unchanged | length }})</h2>
+  <p class="muted small">
+    These rows are identical to what is on file, so importing leaves them alone:
+    {{ plan.unchanged | map(attribute='name') | join(', ') }}.
+  </p>
+</section>
+{% endif %}
+
+{% if result %}
+<p><a class="btn" href="/admin/members">Back to members</a></p>
+{% else %}
+<p><a class="btn" href="/admin/members/import">Choose a different file</a></p>
+{% endif %}
+{% endif %}
+
+{% endblock %}

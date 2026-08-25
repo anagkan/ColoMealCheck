@@ -47,10 +47,12 @@ services:
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
       TIMEZONE: ${TIMEZONE:-America/New_York}
       PHOTO_DIR: /srv/data/photos
-      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
-      # Left blank, the first boot generates one and prints it to
-      # `docker compose logs api`. It is shown once.
-      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      # BOOTSTRAP_ADMIN_* are the old names for these, still honoured.
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-${BOOTSTRAP_ADMIN_USERNAME:-admin}}
+      # Set it and it is re-applied on every boot, so editing .env and
+      # restarting is how the admin password gets changed. Left blank, the
+      # first boot generates one and prints it to `docker compose logs api`.
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-${BOOTSTRAP_ADMIN_PASSWORD:-}}
       STAFF_PIN: ${STAFF_PIN:-1234}
       # Only set on a kiosk whose reader cannot type; see bridge/README.md.
       # Points at the kiosk laptop's own loopback, not at this container.

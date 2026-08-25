@@ -4,6 +4,7 @@ from functools import lru_cache
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -22,8 +23,19 @@ class Settings(BaseSettings):
     timezone: str = "America/New_York"
     photo_dir: Path = Path("data/photos")
 
-    bootstrap_admin_username: str = "admin"
-    bootstrap_admin_password: str = ""
+    # The admin account, re-applied on every boot when a password is set, so
+    # editing .env and restarting is how an admin password gets changed. Left
+    # blank, one is generated on first boot and printed to the log instead.
+    # BOOTSTRAP_ADMIN_* are the original names, still accepted so an existing
+    # .env keeps working.
+    admin_username: str = Field(
+        default="admin",
+        validation_alias=AliasChoices("ADMIN_USERNAME", "BOOTSTRAP_ADMIN_USERNAME"),
+    )
+    admin_password: str = Field(
+        default="",
+        validation_alias=AliasChoices("ADMIN_PASSWORD", "BOOTSTRAP_ADMIN_PASSWORD"),
+    )
 
     # Typed at the kiosk to authorize enrollment, overrides and forced entries.
     # The kiosk is a shared device in a dining room; a PIN is the right weight of

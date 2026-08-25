@@ -2,22 +2,45 @@
 #
 # Launch the dining-room kiosk.
 #
-# The two Chrome flags below are not optional. Two features the kiosk needs
-# exist only in a "secure context", and a plain-HTTP LAN address is not one:
-# the webcam API (getUserMedia), without which enrollment photos fail silently,
-# and service workers, without which the kiosk cannot start while the server is
-# unreachable. --unsafely-treat-insecure-origin-as-secure marks this one origin
-# trusted, and it is IGNORED unless --user-data-dir points at a separate
-# profile. Both, or neither works.
+# Two features the kiosk needs exist only in a "secure context": the webcam API
+# (getUserMedia), without which enrollment photos fail silently, and service
+# workers, without which the kiosk cannot start while the server is unreachable.
 #
-# Usage:  ./run-kiosk.sh [server-host] [port]
-#     e.g. ./run-kiosk.sh colonial-server.local 8000
+# An https:// origin is a secure context on its own merits — that is the
+# deployment in DEPLOYMENT.md, where `tailscale serve` terminates TLS on a real
+# certificate. A plain-HTTP LAN address is not, and there
+# --unsafely-treat-insecure-origin-as-secure has to stand in, marking the one
+# origin trusted. That flag is IGNORED unless --user-data-dir points at a
+# separate profile, so on HTTP it is both flags or neither. This script adds it
+# only when the origin actually needs it.
+#
+# --user-data-dir is passed either way, for the reason under PROFILE below.
+#
+# Usage:  ./run-kiosk.sh <origin>
+#         ./run-kiosk.sh [server-host] [port]
+#     e.g. ./run-kiosk.sh https://colonial-server.tailfe8c.ts.net
+#          ./run-kiosk.sh colonial-server.local 8000
 
 set -euo pipefail
 
-HOST="${1:-${COLOMEAL_HOST:-localhost}}"
-PORT="${2:-${COLOMEAL_PORT:-8000}}"
-ORIGIN="http://${HOST}:${PORT}"
+# Anything carrying a scheme is taken verbatim, port and all — that is how the
+# Tailscale deployment names a server that answers on 443 and so has no port to
+# quote. Anything else is a bare hostname and gets the old http://host:port
+# treatment, so the LAN invocation keeps working unchanged.
+if [[ -n "${COLOMEAL_ORIGIN:-}" ]]; then
+  ORIGIN="${COLOMEAL_ORIGIN}"
+elif [[ "${1:-}" == http://* || "${1:-}" == https://* ]]; then
+  ORIGIN="$1"
+else
+  HOST="${1:-${COLOMEAL_HOST:-localhost}}"
+  PORT="${2:-${COLOMEAL_PORT:-8000}}"
+  ORIGIN="http://${HOST}:${PORT}"
+fi
+
+# Chrome matches --unsafely-treat-insecure-origin-as-secure against an origin
+# with no trailing slash, and a stray one would double up in the URLs below.
+ORIGIN="${ORIGIN%/}"
+
 # Under $HOME rather than $TMPDIR, and this matters more than it looks.
 #
 # The profile holds two things that have to outlive a reboot: the service
@@ -67,14 +90,26 @@ fi
 
 mkdir -p "$PROFILE"
 
-exec "$CHROME" \
-  --kiosk \
-  --user-data-dir="$PROFILE" \
-  --unsafely-treat-insecure-origin-as-secure="$ORIGIN" \
-  --autoplay-policy=no-user-gesture-required \
-  --disable-features=TranslateUI \
-  --disable-session-crashed-bubble \
-  --disable-infobars \
-  --no-first-run \
-  --noerrdialogs \
-  "$ORIGIN/"
+CHROME_ARGS=(
+  --kiosk
+  --user-data-dir="$PROFILE"
+  --autoplay-policy=no-user-gesture-required
+  --disable-features=TranslateUI
+  --disable-session-crashed-bubble
+  --disable-infobars
+  --no-first-run
+  --noerrdialogs
+)
+
+# Only plain HTTP needs the exception. Passing it for an https:// origin would
+# be worse than redundant: it tells Chrome to trust the origin whatever the
+# certificate does, which is exactly how you fail to notice the morning the
+# certificate stopped renewing.
+if [[ "$ORIGIN" == https://* ]]; then
+  echo "Secure origin — the webcam and service worker need no exception."
+else
+  echo "Insecure origin — marking ${ORIGIN} trusted so the webcam and service worker work."
+  CHROME_ARGS+=(--unsafely-treat-insecure-origin-as-secure="$ORIGIN")
+fi
+
+exec "$CHROME" "${CHROME_ARGS[@]}" "$ORIGIN/"

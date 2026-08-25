@@ -25,8 +25,9 @@ services:
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
       TIMEZONE: ${TIMEZONE:-America/New_York}
       PHOTO_DIR: /srv/data/photos
-      BOOTSTRAP_ADMIN_USERNAME: ${BOOTSTRAP_ADMIN_USERNAME:-admin}
-      BOOTSTRAP_ADMIN_PASSWORD: ${BOOTSTRAP_ADMIN_PASSWORD:-}
+      # BOOTSTRAP_ADMIN_* are the old names for these, still honoured.
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-${BOOTSTRAP_ADMIN_USERNAME:-admin}}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-${BOOTSTRAP_ADMIN_PASSWORD:-}}
       STAFF_PIN: ${STAFF_PIN:-1234}
       # Only set on a kiosk whose reader cannot type; see bridge/README.md.
       # Points at the kiosk laptop's own loopback, not at this container.
