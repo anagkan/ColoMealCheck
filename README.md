@@ -77,6 +77,13 @@ The app is at `http://<server-host>:8000`:
 Two containers, no reverse proxy: Uvicorn serves the API, the pages and the
 photos directly. Postgres and the photo directory are on named volumes.
 
+That is the picture when the server and the kiosk share a LAN. For the real
+deployment — the stack on a server, the kiosk a Chromebook on a different
+network, the two joined over Tailscale — see [`DEPLOYMENT.md`](DEPLOYMENT.md).
+It differs in more than the network: a Chromebook cannot be given Chrome's
+command-line flags, so the kiosk there needs genuine HTTPS rather than the
+insecure-origin exception `run-kiosk.sh` relies on below.
+
 ### Enrollment
 
 Enrolling is what *creates* a member. The usual case is someone not in the
