@@ -18,7 +18,7 @@
 #
 # Usage:  ./run-kiosk.sh <origin>
 #         ./run-kiosk.sh [server-host] [port]
-#     e.g. ./run-kiosk.sh https://colonial-server.tailfe8c.ts.net
+#     e.g. ./run-kiosk.sh https://colonial-server.<tailnet>.ts.net
 #          ./run-kiosk.sh colonial-server.local 8000
 
 set -euo pipefail

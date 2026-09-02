@@ -46,6 +46,19 @@ data/
 *.sqlite
 *.db
 
+# Backups and exports contain member names, PUIDs, NetIDs, or photographs.
+db-*.sql.gz
+photos-*.tar.gz
+attendance-*.csv
+weekly-usage-*.csv
+overages-*.csv
+guest-meals-*.csv
+enrollment-gaps.csv
+member-analytics-*.csv
+roster*.csv
+*.xls
+*.xlsx
+
 # --- Logs ---
 *.log
 logs/

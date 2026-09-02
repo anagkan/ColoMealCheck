@@ -147,8 +147,8 @@ right after:
   Devices authenticated with a tag do not expire, but set it explicitly anyway.
 - **Enable MagicDNS and HTTPS Certificates** (DNS page). Both are required for
   the next step. Note the tailnet name shown there — something like
-  `tailfe8c.ts.net`. The server's full name is
-  `colonial-server.tailfe8c.ts.net`.
+  `<tailnet>.ts.net`. The server's full name is
+  `colonial-server.<tailnet>.ts.net`.
 
 Tags need declaring in the ACL file before `--advertise-tags` will be accepted;
 see §4.

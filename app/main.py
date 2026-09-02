@@ -126,7 +126,7 @@ async def readable_validation_error(_request: Request, exc: RequestValidationErr
     """
     return JSONResponse(
         {"detail": _describe(exc.errors())},
-        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
     )
 
 

@@ -234,7 +234,7 @@ def guest(
     last = payload.guest_last_name.strip()
     if not first or not last:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Enter the guest's first and last name.",
         )
 
@@ -245,13 +245,13 @@ def guest(
     netid_reason = payload.guest_netid_reason.strip()
     if not netid and not netid_reason:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Enter the guest's Princeton NetID, or tick “Guest has no NetID” "
             "and say why.",
         )
     if netid and not netid_service.is_valid_netid(netid):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, netid_service.NETID_FORMAT_HINT
+            status.HTTP_422_UNPROCESSABLE_CONTENT, netid_service.NETID_FORMAT_HINT
         )
 
     override_by = None
@@ -294,7 +294,7 @@ def _resolve_host(db: Session, payload: GuestRequest) -> Member:
 
     if not payload.host_value:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Choose the member hosting this guest.",
         )
 
@@ -325,13 +325,13 @@ def alumni_meal(
     last = payload.last_name.strip()
     if not first or not last:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Enter the alum's first and last name.",
         )
 
     if payload.class_year is None:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, "Enter the alum's class year."
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "Enter the alum's class year."
         )
 
     # Either contact detail is enough on its own — an alum who gives a phone
@@ -342,15 +342,15 @@ def alumni_meal(
     phone = alumni_service.normalize_phone(payload.phone)
     if not email and not phone:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, alumni_service.CONTACT_REQUIRED_HINT
+            status.HTTP_422_UNPROCESSABLE_CONTENT, alumni_service.CONTACT_REQUIRED_HINT
         )
     if email and not alumni_service.is_valid_email(email):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, alumni_service.EMAIL_FORMAT_HINT
+            status.HTTP_422_UNPROCESSABLE_CONTENT, alumni_service.EMAIL_FORMAT_HINT
         )
     if phone and not alumni_service.is_valid_phone(phone):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, alumni_service.PHONE_FORMAT_HINT
+            status.HTTP_422_UNPROCESSABLE_CONTENT, alumni_service.PHONE_FORMAT_HINT
         )
 
     # Optional, and outside the either-or above: many alumni keep a NetID for
@@ -360,7 +360,7 @@ def alumni_meal(
     alumni_netid = netid_service.normalize_netid(payload.netid)
     if alumni_netid and not netid_service.is_valid_netid(alumni_netid):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, netid_service.NETID_FORMAT_HINT
+            status.HTTP_422_UNPROCESSABLE_CONTENT, netid_service.NETID_FORMAT_HINT
         )
 
     moment, stale = _trusted_moment(payload.occurred_at)
@@ -482,7 +482,7 @@ def enroll(
         credential_service.is_valid_csn(payload.value)
     ):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, credential_service.CSN_FORMAT_HINT
+            status.HTTP_422_UNPROCESSABLE_CONTENT, credential_service.CSN_FORMAT_HINT
         )
 
     member = db.get(Member, payload.member_id)
@@ -546,16 +546,16 @@ def enroll_new(
     actor = authorize_privileged_action(payload.staff_pin, user, "enroll a member")
 
     if payload.plan_type not in {p.value for p in PlanType}:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown meal plan.")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown meal plan.")
     if payload.status not in {s.value for s in MemberStatus}:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Unknown member status.")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "Unknown member status.")
 
     puid = credential_service.normalize_puid(payload.puid)
     if not puid:
-        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "A PUID is required.")
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_CONTENT, "A PUID is required.")
     if not credential_service.is_valid_puid(puid):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, credential_service.PUID_FORMAT_HINT
+            status.HTTP_422_UNPROCESSABLE_CONTENT, credential_service.PUID_FORMAT_HINT
         )
 
     # Required here, unlike a guest's, and with no "has no NetID" escape hatch:
@@ -565,18 +565,18 @@ def enroll_new(
     netid = netid_service.normalize_netid(payload.netid)
     if not netid:
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, "A Princeton NetID is required."
+            status.HTTP_422_UNPROCESSABLE_CONTENT, "A Princeton NetID is required."
         )
     if not netid_service.is_valid_netid(netid):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, netid_service.NETID_FORMAT_HINT
+            status.HTTP_422_UNPROCESSABLE_CONTENT, netid_service.NETID_FORMAT_HINT
         )
 
     if payload.credential_type == CredentialType.CSN.value and not (
         credential_service.is_valid_csn(payload.value)
     ):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, credential_service.CSN_FORMAT_HINT
+            status.HTTP_422_UNPROCESSABLE_CONTENT, credential_service.CSN_FORMAT_HINT
         )
 
     clash = db.scalar(select(Member).where(Member.puid == puid))

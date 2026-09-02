@@ -133,7 +133,7 @@ def _clean_netid(raw: str, db: Session, exclude_member_id: int | None = None) ->
         return None
     if not netid_service.is_valid_netid(value):
         raise HTTPException(
-            status.HTTP_422_UNPROCESSABLE_ENTITY, netid_service.NETID_FORMAT_HINT
+            status.HTTP_422_UNPROCESSABLE_CONTENT, netid_service.NETID_FORMAT_HINT
         )
     stmt = select(Member).where(Member.netid == value)
     if exclude_member_id is not None:
