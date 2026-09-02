@@ -51,11 +51,12 @@ cp .env.example .env
 docker compose up -d
 ```
 
-`ADMIN_USERNAME` and `ADMIN_PASSWORD` are the admin login for `/admin`. They are
-read on **every** boot, so changing the password is: edit `.env`, then
-`docker compose up -d`. That is currently the only way to change it — the app
-has no screen that does. Changing `ADMIN_USERNAME` renames the account rather
-than leaving a second admin behind.
+`ADMIN_USERNAME` and `ADMIN_PASSWORD` are the protected root-admin login for
+`/admin`. They are read on **every** boot, so changing the password is: edit
+`.env`, then `docker compose up -d`. The root account cannot be changed in the
+app. Changing `ADMIN_USERNAME` renames it rather than leaving a second root
+admin behind. Once signed in, use **Accounts** to add individual admin or staff
+logins, change their roles, reset their passwords, or deactivate them.
 
 Leave `ADMIN_PASSWORD` blank and the first boot generates one instead and prints
 it to `docker compose logs api`, once; the account is then left alone on later
@@ -73,6 +74,7 @@ The app is at `http://<server-host>:8000`:
 | | A banner across the top reads **Now serving Dinner · 57:46 left** while a meal is running, and **Next Meal: Breakfast · in 12:30:15** when it is not. Both countdowns tick live. |
 | `/enroll` | Staff page for enrolling a member and their card. Gated by the staff PIN. |
 | `/admin` | The office: roster, analytics, schedule, reports, audit. Gated by a staff login. |
+| `/admin/accounts` | Admin-only account management. The root admin remains controlled by `.env`. |
 
 Two containers, no reverse proxy: Uvicorn serves the API, the pages and the
 photos directly. Postgres and the photo directory are on named volumes.

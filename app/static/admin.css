@@ -189,6 +189,12 @@ form { margin: 0; }
 
 details summary { cursor: pointer; font-weight: 600; margin-bottom: 0.75rem; }
 
+.account-facts { display: flex; gap: 2rem; flex-wrap: wrap; margin: 1rem 0 0; }
+.account-facts div { min-width: 130px; }
+.account-facts dt { color: var(--ink-dim); font-size: 0.78rem; text-transform: uppercase;
+                    letter-spacing: 0.05em; }
+.account-facts dd { margin: 0.25rem 0 0; }
+
 /* The raw roster CSV carried between the import preview and the confirm POST.
    Monospaced and scrollable, because the point of showing it is that staff can
    check a suspect line number against the file they picked. */

@@ -104,9 +104,10 @@ docker compose up -d          # or -f docker-compose.deploy.yml, see below
 docker compose logs api       # the admin password prints here if generated
 ```
 
-Set `ADMIN_PASSWORD` in `.env` and that is the password, re-applied on every
-boot — to change it later, edit `.env` and `docker compose up -d` again. There
-is no screen in the app that changes an admin password, so this is the only way.
+Set `ADMIN_PASSWORD` in `.env` and that is the root-admin password, re-applied
+on every boot — to change it later, edit `.env` and `docker compose up -d`
+again. The root account is deliberately read-only in the app. After signing in,
+use **Accounts** to create and manage additional admin or staff logins.
 
 Left blank, the first boot generates one and prints it to the log **once**; copy
 it out now, because nothing shows it again. Either way `.env` is the file to

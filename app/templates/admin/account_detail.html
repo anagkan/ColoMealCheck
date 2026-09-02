@@ -1,0 +1,70 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ account.username }}{% endblock %}
+{% block content %}
+
+<header class="page-head">
+  <div>
+    <h1>{{ account.display_name or account.username }}</h1>
+    <p class="muted">Staff account · {{ account.username }}</p>
+  </div>
+  <a class="btn" href="/admin/accounts">← All accounts</a>
+</header>
+
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+{% if error %}<p class="alert" role="alert">{{ error }}</p>{% endif %}
+
+{% if is_root %}
+<section class="card">
+  <h2>Root admin</h2>
+  <p>
+    This account is controlled by <code>ADMIN_USERNAME</code> and <code>ADMIN_PASSWORD</code>
+    in the server environment. Edit those values and restart the app to change its sign-in.
+  </p>
+  <dl class="account-facts">
+    <div><dt>Username</dt><dd>{{ account.username }}</dd></div>
+    <div><dt>Role</dt><dd><span class="chip info">admin</span></dd></div>
+    <div><dt>Status</dt><dd><span class="chip ok">active</span></dd></div>
+  </dl>
+</section>
+{% else %}
+<section class="card">
+  <h2>Profile and access</h2>
+  <form method="post" action="/admin/accounts/{{ account.id }}" class="form-grid">
+    <label>Username
+      <input name="username" value="{{ account.username }}" maxlength="64" required>
+    </label>
+    <label>Display name
+      <input name="display_name" value="{{ account.display_name or '' }}" maxlength="120">
+    </label>
+    <label>Role
+      <select name="role">
+        {% for role in roles %}
+          <option value="{{ role }}" {% if account.role == role %}selected{% endif %}>{{ role }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="check">
+      <input name="is_active" type="checkbox" {% if account.is_active %}checked{% endif %}>
+      Active — can sign in
+    </label>
+    <button class="primary" type="submit">Save account</button>
+  </form>
+  {% if account.id == user.id %}
+    <p class="muted small">You may rename this account, but you cannot demote or deactivate yourself.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Reset password</h2>
+  <form method="post" action="/admin/accounts/{{ account.id }}/password" class="inline">
+    <label>New password
+      <input name="password" type="password" minlength="10" maxlength="256"
+             autocomplete="new-password" required>
+    </label>
+    <button type="submit">Set new password</button>
+  </form>
+  <p class="muted small">Existing signed-in sessions are not ended; the new password applies to future sign-ins.</p>
+</section>
+{% endif %}
+
+{% endblock %}

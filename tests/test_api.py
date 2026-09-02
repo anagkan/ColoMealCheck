@@ -10,6 +10,7 @@ from datetime import datetime, time, timedelta, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import get_settings
 from app.db import get_db
 from app.main import app
 from app.models import (
@@ -23,7 +24,7 @@ from app.models import (
     StaffRole,
     StaffUser,
 )
-from app.security import hash_password
+from app.security import hash_password, verify_password
 from app.seeds.meal_periods import default_periods
 from app.services import credentials as credential_service
 from app.services.periods import local_tz
@@ -1037,13 +1038,183 @@ class TestAdminAuth:
         assert response.status_code == 200
 
 
+class TestAccountManagement:
+    def test_accounts_page_is_admin_only(self, client, db):
+        staff = StaffUser(
+            username="pat",
+            display_name="Pat Cook",
+            password_hash=hash_password("correct-horse"),
+            role=StaffRole.STAFF.value,
+            is_active=True,
+        )
+        db.add(staff)
+        db.commit()
+        client.post("/login", data={"username": "pat", "password": "correct-horse"})
+
+        assert client.get("/admin/accounts").status_code == 403
+        assert client.post(
+            "/admin/accounts",
+            data={
+                "username": "another",
+                "display_name": "Another Admin",
+                "password": "initial-password",
+                "role": StaffRole.ADMIN.value,
+            },
+        ).status_code == 403
+
+    def test_an_admin_can_create_another_admin_who_can_sign_in(self, signed_in, db):
+        response = signed_in.post(
+            "/admin/accounts",
+            data={
+                "username": "morgan",
+                "display_name": "Morgan Steward",
+                "password": "initial-password",
+                "role": StaffRole.ADMIN.value,
+            },
+            follow_redirects=False,
+        )
+
+        assert response.status_code == 303
+        account = db.query(StaffUser).filter_by(username="morgan").one()
+        assert account.role == StaffRole.ADMIN.value
+        assert verify_password("initial-password", account.password_hash)
+        entry = db.query(AuditLog).filter_by(action="staff_account.created").one()
+        assert entry.entity_id == account.id
+        assert "password" not in entry.detail
+
+        signed_in.post("/logout")
+        login = signed_in.post(
+            "/login",
+            data={"username": "morgan", "password": "initial-password"},
+            follow_redirects=False,
+        )
+        assert login.status_code == 303
+        assert signed_in.get("/admin/accounts").status_code == 200
+
+    def test_duplicate_username_is_shown_without_creating_an_account(
+        self, signed_in, db, admin_user
+    ):
+        response = signed_in.post(
+            "/admin/accounts",
+            data={
+                "username": admin_user.username,
+                "display_name": "Duplicate",
+                "password": "initial-password",
+                "role": StaffRole.ADMIN.value,
+            },
+        )
+
+        assert response.status_code == 409
+        assert "already in use" in response.text
+        assert db.query(StaffUser).filter_by(username=admin_user.username).count() == 1
+
+    def test_an_admin_can_edit_deactivate_and_reset_another_account(
+        self, signed_in, db
+    ):
+        account = StaffUser(
+            username="pat",
+            display_name="Pat Cook",
+            password_hash=hash_password("old-password"),
+            role=StaffRole.STAFF.value,
+            is_active=True,
+        )
+        db.add(account)
+        db.commit()
+
+        updated = signed_in.post(
+            f"/admin/accounts/{account.id}",
+            data={
+                "username": "patricia",
+                "display_name": "Patricia Cook",
+                "role": StaffRole.ADMIN.value,
+                # No checkbox value means deactivate.
+            },
+            follow_redirects=False,
+        )
+        assert updated.status_code == 303
+        db.refresh(account)
+        assert account.username == "patricia"
+        assert account.display_name == "Patricia Cook"
+        assert account.role == StaffRole.ADMIN.value
+        assert not account.is_active
+
+        reset = signed_in.post(
+            f"/admin/accounts/{account.id}/password",
+            data={"password": "new-password-123"},
+            follow_redirects=False,
+        )
+        assert reset.status_code == 303
+        db.refresh(account)
+        assert verify_password("new-password-123", account.password_hash)
+        assert not verify_password("old-password", account.password_hash)
+
+    def test_an_admin_cannot_demote_or_deactivate_themselves(
+        self, signed_in, db, admin_user
+    ):
+        response = signed_in.post(
+            f"/admin/accounts/{admin_user.id}",
+            data={
+                "username": admin_user.username,
+                "display_name": admin_user.display_name,
+                "role": StaffRole.STAFF.value,
+            },
+        )
+
+        assert response.status_code == 409
+        assert "cannot demote or deactivate your own account" in response.text
+        db.refresh(admin_user)
+        assert admin_user.role == StaffRole.ADMIN.value
+        assert admin_user.is_active
+
+    def test_the_environment_root_cannot_be_changed_in_the_ui(
+        self, signed_in, db, monkeypatch
+    ):
+        monkeypatch.setenv("ADMIN_USERNAME", "root-admin")
+        get_settings.cache_clear()
+        root = StaffUser(
+            username="root-admin",
+            display_name="Bootstrap Admin",
+            password_hash=hash_password("root-password"),
+            role=StaffRole.ADMIN.value,
+            is_active=True,
+        )
+        db.add(root)
+        db.commit()
+        try:
+            page = signed_in.get(f"/admin/accounts/{root.id}")
+            assert page.status_code == 200
+            assert "controlled by" in page.text
+
+            update = signed_in.post(
+                f"/admin/accounts/{root.id}",
+                data={
+                    "username": "renamed-root",
+                    "display_name": "Renamed Root",
+                    "role": StaffRole.STAFF.value,
+                },
+            )
+            reset = signed_in.post(
+                f"/admin/accounts/{root.id}/password",
+                data={"password": "changed-password"},
+            )
+            assert update.status_code == 403
+            assert reset.status_code == 403
+            db.refresh(root)
+            assert root.username == "root-admin"
+            assert root.role == StaffRole.ADMIN.value
+            assert root.is_active
+            assert verify_password("root-password", root.password_hash)
+        finally:
+            get_settings.cache_clear()
+
+
 class TestAdminPages:
     """Renders every template. A typo in a Jinja expression fails right here."""
 
     @pytest.mark.parametrize(
         "path",
         ["/admin", "/admin/members", "/admin/analytics", "/admin/reports",
-         "/admin/schedule", "/admin/settings", "/admin/audit"],
+         "/admin/schedule", "/admin/settings", "/admin/accounts", "/admin/audit"],
     )
     def test_page_renders(self, signed_in, member, path):
         response = signed_in.get(path)

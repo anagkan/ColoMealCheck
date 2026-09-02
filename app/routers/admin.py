@@ -6,8 +6,10 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.config import get_settings
 from app.db import get_db
 from app.deps import require_admin, require_staff
 from app.models import (
@@ -18,8 +20,10 @@ from app.models import (
     Member,
     MemberStatus,
     PlanType,
+    StaffRole,
     StaffUser,
 )
+from app.security import hash_password
 from app.services import audit as audit_service
 from app.services import credentials as credential_service
 from app.services import netid as netid_service
@@ -41,6 +45,11 @@ from app.templating import templates
 router = APIRouter(prefix="/admin", tags=["admin"])
 
 WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+ACCOUNT_NOTICES = {
+    "created": "Account created.",
+    "updated": "Account updated.",
+    "password": "Password reset.",
+}
 
 
 def _today(db: Session) -> date:
@@ -56,6 +65,330 @@ def _parse_date(raw: str | None, fallback: date) -> date:
         return date.fromisoformat(raw)
     except ValueError:
         return fallback
+
+
+def _root_admin_username() -> str:
+    """The account owned by ADMIN_USERNAME/ADMIN_PASSWORD, not by this UI."""
+    return (get_settings().admin_username or "admin").strip()
+
+
+def _clean_account_fields(username: str, display_name: str, role: str) -> tuple[str, str | None, str]:
+    clean_username = username.strip()
+    clean_display_name = display_name.strip() or None
+    if not clean_username:
+        raise ValueError("Username is required.")
+    if len(clean_username) > 64:
+        raise ValueError("Username must be 64 characters or fewer.")
+    if any(character.isspace() for character in clean_username):
+        raise ValueError("Username cannot contain spaces.")
+    if clean_display_name and len(clean_display_name) > 120:
+        raise ValueError("Display name must be 120 characters or fewer.")
+    if role not in {item.value for item in StaffRole}:
+        raise ValueError("Choose either the admin or staff role.")
+    return clean_username, clean_display_name, role
+
+
+def _clean_account_password(password: str) -> str:
+    if len(password) < 10:
+        raise ValueError("Password must be at least 10 characters.")
+    if len(password) > 256:
+        raise ValueError("Password must be 256 characters or fewer.")
+    return password
+
+
+def _accounts_context(
+    db: Session,
+    user: StaffUser,
+    *,
+    error: str | None = None,
+    notice: str | None = None,
+    create_values: dict | None = None,
+) -> dict:
+    root_username = _root_admin_username()
+    accounts = list(db.scalars(select(StaffUser).order_by(StaffUser.username)))
+    accounts.sort(key=lambda account: (account.username != root_username, account.username.lower()))
+    return {
+        "user": user,
+        "accounts": accounts,
+        "roles": [role.value for role in StaffRole],
+        "root_username": root_username,
+        "error": error,
+        "notice": ACCOUNT_NOTICES.get(notice or ""),
+        "create_values": create_values or {},
+    }
+
+
+@router.get("/accounts")
+def account_list(
+    request: Request,
+    notice: str | None = None,
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_admin),
+):
+    return templates.TemplateResponse(
+        request,
+        "admin/accounts.html",
+        _accounts_context(db, user, notice=notice),
+    )
+
+
+@router.post("/accounts")
+def create_account(
+    request: Request,
+    username: str = Form(...),
+    display_name: str = Form(""),
+    password: str = Form(...),
+    role: str = Form(StaffRole.ADMIN.value),
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_admin),
+):
+    values = {"username": username, "display_name": display_name, "role": role}
+    try:
+        clean_username, clean_display_name, clean_role = _clean_account_fields(
+            username, display_name, role
+        )
+        clean_password = _clean_account_password(password)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "admin/accounts.html",
+            _accounts_context(db, user, error=str(exc), create_values=values),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    if clean_username == _root_admin_username():
+        return templates.TemplateResponse(
+            request,
+            "admin/accounts.html",
+            _accounts_context(
+                db,
+                user,
+                error="That username is reserved for the environment-managed root admin.",
+                create_values=values,
+            ),
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    if db.scalar(select(StaffUser).where(StaffUser.username == clean_username)) is not None:
+        return templates.TemplateResponse(
+            request,
+            "admin/accounts.html",
+            _accounts_context(
+                db, user, error="That username is already in use.", create_values=values
+            ),
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
+    account = StaffUser(
+        username=clean_username,
+        display_name=clean_display_name,
+        password_hash=hash_password(clean_password),
+        role=clean_role,
+        is_active=True,
+    )
+    db.add(account)
+    try:
+        db.commit()
+    except IntegrityError:
+        # The explicit lookup gives the normal friendly path; the constraint
+        # still has the final word if two admins submit the same name together.
+        db.rollback()
+        return templates.TemplateResponse(
+            request,
+            "admin/accounts.html",
+            _accounts_context(
+                db, user, error="That username is already in use.", create_values=values
+            ),
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    db.refresh(account)
+    audit_service.record(
+        db,
+        actor=f"staff:{user.username}",
+        action="staff_account.created",
+        entity_type="staff_user",
+        entity_id=account.id,
+        detail={"username": account.username, "role": account.role},
+    )
+    return RedirectResponse("/admin/accounts?notice=created", status_code=303)
+
+
+def _account_detail_context(
+    user: StaffUser,
+    account: StaffUser,
+    *,
+    error: str | None = None,
+    notice: str | None = None,
+) -> dict:
+    return {
+        "user": user,
+        "account": account,
+        "roles": [role.value for role in StaffRole],
+        "is_root": account.username == _root_admin_username(),
+        "error": error,
+        "notice": ACCOUNT_NOTICES.get(notice or ""),
+    }
+
+
+@router.get("/accounts/{account_id}")
+def account_detail(
+    account_id: int,
+    request: Request,
+    notice: str | None = None,
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_admin),
+):
+    account = db.get(StaffUser, account_id)
+    if account is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
+    return templates.TemplateResponse(
+        request,
+        "admin/account_detail.html",
+        _account_detail_context(user, account, notice=notice),
+    )
+
+
+@router.post("/accounts/{account_id}")
+def update_account(
+    account_id: int,
+    request: Request,
+    username: str = Form(...),
+    display_name: str = Form(""),
+    role: str = Form(...),
+    is_active: str = Form(""),
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_admin),
+):
+    account = db.get(StaffUser, account_id)
+    if account is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
+    if account.username == _root_admin_username():
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "The root admin is managed through environment variables.",
+        )
+
+    try:
+        clean_username, clean_display_name, clean_role = _clean_account_fields(
+            username, display_name, role
+        )
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "admin/account_detail.html",
+            _account_detail_context(user, account, error=str(exc)),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    active = is_active == "on"
+    if account.id == user.id and (clean_role != StaffRole.ADMIN.value or not active):
+        return templates.TemplateResponse(
+            request,
+            "admin/account_detail.html",
+            _account_detail_context(
+                user, account, error="You cannot demote or deactivate your own account."
+            ),
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    if clean_username == _root_admin_username():
+        return templates.TemplateResponse(
+            request,
+            "admin/account_detail.html",
+            _account_detail_context(
+                user,
+                account,
+                error="That username is reserved for the environment-managed root admin.",
+            ),
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    duplicate = db.scalar(
+        select(StaffUser).where(
+            StaffUser.username == clean_username,
+            StaffUser.id != account.id,
+        )
+    )
+    if duplicate is not None:
+        return templates.TemplateResponse(
+            request,
+            "admin/account_detail.html",
+            _account_detail_context(user, account, error="That username is already in use."),
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
+    before = {
+        "username": account.username,
+        "display_name": account.display_name,
+        "role": account.role,
+        "is_active": account.is_active,
+    }
+    account.username = clean_username
+    account.display_name = clean_display_name
+    account.role = clean_role
+    account.is_active = active
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        return templates.TemplateResponse(
+            request,
+            "admin/account_detail.html",
+            _account_detail_context(user, account, error="That username is already in use."),
+            status_code=status.HTTP_409_CONFLICT,
+        )
+    after = {
+        "username": account.username,
+        "display_name": account.display_name,
+        "role": account.role,
+        "is_active": account.is_active,
+    }
+    if before != after:
+        audit_service.record(
+            db,
+            actor=f"staff:{user.username}",
+            action="staff_account.updated",
+            entity_type="staff_user",
+            entity_id=account.id,
+            detail={"before": before, "after": after},
+        )
+    return RedirectResponse(f"/admin/accounts/{account.id}?notice=updated", status_code=303)
+
+
+@router.post("/accounts/{account_id}/password")
+def reset_account_password(
+    account_id: int,
+    request: Request,
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_admin),
+):
+    account = db.get(StaffUser, account_id)
+    if account is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Account not found")
+    if account.username == _root_admin_username():
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Change the root admin password through ADMIN_PASSWORD.",
+        )
+    try:
+        clean_password = _clean_account_password(password)
+    except ValueError as exc:
+        return templates.TemplateResponse(
+            request,
+            "admin/account_detail.html",
+            _account_detail_context(user, account, error=str(exc)),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        )
+
+    account.password_hash = hash_password(clean_password)
+    db.commit()
+    audit_service.record(
+        db,
+        actor=f"staff:{user.username}",
+        action="staff_account.password_reset",
+        entity_type="staff_user",
+        entity_id=account.id,
+        detail={"username": account.username},
+    )
+    return RedirectResponse(f"/admin/accounts/{account.id}?notice=password", status_code=303)
 
 
 @router.get("")

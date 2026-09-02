@@ -1,0 +1,75 @@
+{% extends "admin/base.html" %}
+{% block title %}Accounts{% endblock %}
+{% block content %}
+
+<header class="page-head">
+  <div>
+    <h1>Accounts</h1>
+    <p class="muted">Individual sign-ins for the admin office.</p>
+  </div>
+</header>
+
+{% if notice %}<p class="notice">{{ notice }}</p>{% endif %}
+{% if error %}<p class="alert" role="alert">{{ error }}</p>{% endif %}
+
+<p class="notice">
+  <strong>{{ root_username }}</strong> is the root admin. Its username and password come from
+  <code>ADMIN_USERNAME</code> and <code>ADMIN_PASSWORD</code> and cannot be changed here.
+</p>
+
+<details class="card" {% if error %}open{% endif %}>
+  <summary>Add an account</summary>
+  <form method="post" action="/admin/accounts" class="form-grid">
+    <label>Username
+      <input name="username" value="{{ create_values.username or '' }}" maxlength="64"
+             autocomplete="off" required>
+    </label>
+    <label>Display name
+      <input name="display_name" value="{{ create_values.display_name or '' }}" maxlength="120"
+             autocomplete="off">
+    </label>
+    <label>Role
+      <select name="role">
+        {% for role in roles %}
+          <option value="{{ role }}" {% if (create_values.role or 'admin') == role %}selected{% endif %}>
+            {{ role }}
+          </option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Temporary password
+      <input name="password" type="password" minlength="10" maxlength="256"
+             autocomplete="new-password" required>
+    </label>
+    <button class="primary" type="submit">Create account</button>
+  </form>
+  <p class="muted small">Give the password to the account owner securely. It is never shown again.</p>
+</details>
+
+<table class="grid">
+  <thead>
+    <tr><th>Name</th><th>Username</th><th>Role</th><th>Status</th><th>Created</th><th></th></tr>
+  </thead>
+  <tbody>
+    {% for account in accounts %}
+    <tr>
+      <td>{{ account.display_name or '—' }}</td>
+      <td class="num">
+        {{ account.username }}
+        {% if account.username == root_username %}<span class="chip info">root</span>{% endif %}
+      </td>
+      <td><span class="chip {% if account.role == 'admin' %}info{% endif %}">{{ account.role }}</span></td>
+      <td>
+        {% if account.is_active %}<span class="chip ok">active</span>
+        {% else %}<span class="chip stop">inactive</span>{% endif %}
+      </td>
+      <td class="num">{{ account.created_at | prettydate }}</td>
+      <td><a class="btn" href="/admin/accounts/{{ account.id }}">View</a></td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6" class="muted">No accounts.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}
