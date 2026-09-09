@@ -124,6 +124,23 @@ def test_the_kiosk_script_url_is_versioned(client):
     assert 'id="batteryStatus"' in page.text
 
 
+def test_the_door_screen_uses_the_viewport_layout_and_versioned_css(client):
+    """The 768px-high Chromebook must not inherit the scrolling form layout."""
+    page = client.get("/")
+
+    assert '<body class="kiosk kiosk-home">' in page.text
+    assert '<link rel="stylesheet" href="/static/kiosk.css?v=' in page.text
+
+    css = client.get("/static/kiosk.css").text
+    assert "body.kiosk-home" in css
+    assert "@media (max-height: 960px)" in css
+
+    # Enrollment is deliberately tall and must remain a scrolling document.
+    enroll = client.get("/enroll")
+    assert '<body class="kiosk">' in enroll.text
+    assert "kiosk-home" not in enroll.text
+
+
 def test_every_icon_the_page_itself_links_resolves(client):
     """The manifest is not the only place icons are named.
 

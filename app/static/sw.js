@@ -23,7 +23,7 @@
  *    about them would be a second, invisible answer to the same question.
  */
 
-const CACHE = "colomeal-kiosk-v3";
+const CACHE = "colomeal-kiosk-v4";
 
 /* The door screen and everything it paints with. Deliberately short: this is a
  * boot path, not an offline copy of the app. /enroll is absent because it can

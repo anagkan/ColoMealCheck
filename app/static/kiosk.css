@@ -41,12 +41,10 @@
    settled once here rather than patched per selector as each one is noticed. */
 [hidden] { display: none !important; }
 
-/* The page scrolls. An earlier revision locked it with overflow:hidden and a
-   fixed-height stage, which cut off the bottom of the taller panels on a
-   laptop screen — the guest and enrollment actions became unreachable. */
-/* A flex column so the leftover height is something the layout hands out on
-   purpose rather than whatever falls off the end. See #stage and .kiosk-foot
-   below for how it is split. */
+/* Enrollment and admin pages remain ordinary scrolling documents. The door
+   screen gets its own bounded viewport farther below: unlike a form, all of
+   its permanent controls must be visible without anybody reaching for a
+   trackpad. */
 html, body {
   margin: 0;
   background: var(--bg);
@@ -57,6 +55,18 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+}
+
+/* `dvh` follows the usable viewport when browser chrome appears or disappears;
+   the preceding `vh` declaration is the fallback for older Chromium builds.
+   Only the door screen is locked to it. Enrollment shares this stylesheet and
+   must remain free to grow and scroll. Dialogs are fixed and independently
+   scrollable, so a tall guest form remains reachable as well. */
+body.kiosk-home {
+  height: 100vh;
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* Off-screen rather than hidden: an input with display:none cannot hold focus,
@@ -658,4 +668,172 @@ select.text-input { appearance: none; }
   .meal-banner { gap: 0.75rem; }
   .meal-banner-name { font-size: 1.3rem; }
   .meal-banner-countdown { font-size: 1.15rem; }
+}
+
+/* A Chromebook's 1366 x 768 panel has enough width but much less height than
+   a desktop monitor. Scale the vertical rhythm, imagery and type together so
+   the header, both input paths, footer actions and attribution all remain in
+   the same viewport. The result screen is compacted here too, including the
+   optional early/late meal choices. */
+@media (max-height: 960px) {
+  body.kiosk-home .bar {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 0.75rem;
+    padding: 0.5rem 1.15rem;
+  }
+  body.kiosk-home .bar-left { gap: 0.65rem; min-width: 0; }
+  body.kiosk-home .bar-id { min-width: 0; }
+  body.kiosk-home .crest { width: 34px; height: 34px; }
+  body.kiosk-home .club { font-size: 1rem; }
+  body.kiosk-home .service {
+    max-width: 38vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 0.82rem;
+  }
+  body.kiosk-home .bar-right { gap: 0.65rem; flex-shrink: 0; }
+  body.kiosk-home .clock { font-size: 1.2rem; }
+  body.kiosk-home .bar-link { padding: 0.3rem 0.65rem; font-size: 0.84rem; }
+
+  body.kiosk-home .meal-banner {
+    flex: 0 0 auto;
+    gap: 0.85rem;
+    padding: 0.42rem 1.15rem;
+  }
+  body.kiosk-home .meal-banner-name { font-size: 1.3rem; }
+  body.kiosk-home .meal-banner-countdown { font-size: 1.1rem; }
+
+  body.kiosk-home #stage {
+    flex: 1 1 auto;
+    min-height: 0;
+    padding: 0.65rem 1.15rem;
+    overflow: hidden;
+  }
+  body.kiosk-home .screen { gap: 0.65rem; }
+  body.kiosk-home .idle { gap: 0.85rem; }
+  body.kiosk-home .tap-crest {
+    width: 82px;
+    height: 82px;
+    box-shadow: 0 0 0 4px var(--panel), 0 0 0 5px var(--line);
+  }
+  body.kiosk-home .idle h1 {
+    margin: 0.35rem 0 0.15rem;
+    font-size: 2.15rem;
+  }
+  body.kiosk-home .sub { font-size: 0.92rem; }
+
+  body.kiosk-home .panel {
+    gap: 0.65rem;
+    padding: 0.85rem 1.1rem;
+    border-radius: 14px;
+  }
+  body.kiosk-home .panel-head { gap: 0.15rem; }
+  body.kiosk-home .panel h2 { font-size: 1.4rem; }
+  body.kiosk-home .text-input.big {
+    padding: 0.55rem 0.85rem;
+    font-size: 1.55rem;
+  }
+  body.kiosk-home .action-btn {
+    padding: 0.58rem 1.15rem;
+    font-size: 1rem;
+  }
+
+  body.kiosk-home .result-card {
+    gap: 1.1rem;
+    padding: 0.85rem 1.1rem;
+    border-radius: 14px;
+  }
+  body.kiosk-home .photo { width: 130px; height: 130px; }
+  body.kiosk-home .photo-empty { font-size: 2.5rem; }
+  body.kiosk-home .result-name { font-size: 2.1rem; }
+  body.kiosk-home .meta { font-size: 1rem; }
+  body.kiosk-home .warn-list { font-size: 0.9rem; margin-top: 0.3rem; }
+  body.kiosk-home .band {
+    padding: 0.7rem 1.1rem;
+    border-radius: 12px;
+    font-size: 1.45rem;
+  }
+  body.kiosk-home .anyway-box { gap: 0.5rem; padding: 0.65rem 1rem; }
+  body.kiosk-home .anyway-head { font-size: 0.95rem; }
+  body.kiosk-home .anyway-btn { min-width: 11rem; }
+  body.kiosk-home .anyway-meal { font-size: 1.05rem; }
+  body.kiosk-home .anyway-when { font-size: 0.8rem; }
+
+  body.kiosk-home .kiosk-foot {
+    flex: 0 0 auto;
+    gap: 0.7rem;
+    padding: 0 1.15rem 0.45rem;
+  }
+  body.kiosk-home #guestMealBtn,
+  body.kiosk-home #alumniMealBtn {
+    min-width: 205px;
+    padding: 0.58rem 1rem;
+    font-size: 0.95rem;
+  }
+  body.kiosk-home .kiosk-credit {
+    flex: 0 0 auto;
+    flex-direction: row;
+    justify-content: center;
+    gap: 0.8rem;
+    padding: 0.35rem 1.15rem;
+    font-size: 0.72rem;
+  }
+}
+
+/* The same screen can be attached to a smaller external display. At this
+   height the prompt becomes a compact horizontal lockup, saving another row
+   without dropping any action or explanatory text. */
+@media (max-height: 650px) and (min-width: 700px) {
+  body.kiosk-home .tap-target {
+    display: grid;
+    grid-template-columns: auto auto;
+    grid-template-rows: auto auto;
+    align-items: center;
+    column-gap: 1rem;
+    text-align: left;
+  }
+  body.kiosk-home .tap-crest {
+    grid-row: 1 / 3;
+    width: 62px;
+    height: 62px;
+  }
+  body.kiosk-home .idle h1 {
+    align-self: end;
+    margin: 0;
+    font-size: 1.75rem;
+  }
+  body.kiosk-home .tap-target .sub { align-self: start; }
+  body.kiosk-home .idle { gap: 0.55rem; }
+  body.kiosk-home .panel { padding-block: 0.65rem; }
+  body.kiosk-home .photo { width: 105px; height: 105px; }
+  body.kiosk-home .result-name { font-size: 1.8rem; }
+}
+
+/* Below this there is not enough physical height for the tallest possible
+   result (photo, status, early/late choices and actions) at a useful touch
+   size. Preserve access by scrolling instead of clipping it. */
+@media (max-height: 540px) {
+  body.kiosk-home {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-y: auto;
+  }
+  body.kiosk-home #stage { overflow: visible; }
+}
+
+/* At phone-like widths the header may genuinely need two lines. Such devices
+   can scroll rather than clip; the no-scroll contract is for landscape kiosk
+   displays where every permanent control fits after the rules above. */
+@media (max-width: 699px) {
+  body.kiosk-home {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-y: auto;
+  }
+  body.kiosk-home .bar { flex-wrap: wrap; }
+  body.kiosk-home #stage { overflow: visible; }
 }
