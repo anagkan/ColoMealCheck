@@ -764,7 +764,7 @@
       return;
     }
     if (!PUID_RE.test(value) && !NETID_RE.test(value)) {
-      manualFail("Enter a 9-digit PUID or a 2–8 character NetID, like ak9981.");
+      manualFail("Enter a 9-digit PUID or a 2–8 character NetID, like cc1891.");
       return;
     }
     el("manualError").hidden = true;
