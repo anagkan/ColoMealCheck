@@ -107,6 +107,29 @@ body {
 }
 .bar-link:hover { color: var(--ink); border-color: var(--gold); }
 
+.battery-status {
+  min-width: 3.8rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+.battery-status.low {
+  border-color: var(--warn);
+  background: var(--warn);
+  color: #1a1200;
+}
+.battery-status.critical {
+  border-color: var(--stop);
+  background: var(--stop);
+  color: var(--stop-ink);
+}
+
 .offline {
   font-size: 0.8rem;
   padding: 0.3rem 0.7rem;

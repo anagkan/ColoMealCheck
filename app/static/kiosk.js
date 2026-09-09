@@ -1286,6 +1286,37 @@
   tickClock();
   setInterval(tickClock, 10000);
 
+  /* ---------------- battery ----------------
+   *
+   * Chromium exposes the host battery through navigator.getBattery() on a
+   * secure origin. Other browsers may not implement it, so the indicator is
+   * progressive: unsupported or denied means hidden, never a broken header. */
+  function startBatteryIndicator() {
+    const node = el("batteryStatus");
+    if (!node || typeof navigator.getBattery !== "function") return;
+
+    navigator.getBattery().then((battery) => {
+      const render = () => {
+        const percent = Math.round(Math.max(0, Math.min(1, battery.level)) * 100);
+        node.hidden = false;
+        node.textContent = battery.charging ? `⚡ ${percent}%` : `${percent}%`;
+        node.title = battery.charging
+          ? `Battery ${percent}% · plugged in`
+          : `Battery ${percent}% · discharging`;
+        node.setAttribute("aria-label", node.title);
+        node.classList.toggle("low", !battery.charging && percent <= 20);
+        node.classList.toggle("critical", !battery.charging && percent <= 10);
+      };
+
+      render();
+      battery.addEventListener("levelchange", render);
+      battery.addEventListener("chargingchange", render);
+    }).catch(() => {
+      /* Battery access is optional; leave the indicator hidden if denied. */
+    });
+  }
+  startBatteryIndicator();
+
   /* ---------------- meal banner ----------------
    *
    * The banner answers "can I eat right now, and for how much longer" from

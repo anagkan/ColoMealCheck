@@ -2084,6 +2084,42 @@ async function testTheKioskRunsWithoutServiceWorkerSupport() {
   );
 }
 
+async function testTheBatteryIndicatorTracksLevelAndChargingState() {
+  let battery;
+  const { window } = boot({}, null, (w) => {
+    battery = new w.EventTarget();
+    battery.level = 0.42;
+    battery.charging = true;
+    Object.defineProperty(w.navigator, "getBattery", {
+      configurable: true,
+      value: () => Promise.resolve(battery),
+    });
+  });
+
+  await settle();
+  const indicator = window.document.getElementById("batteryStatus");
+  check(
+    "the battery indicator shows the current charge",
+    indicator.hidden === false && indicator.textContent.includes("42%"),
+    `hidden=${indicator.hidden} text=${JSON.stringify(indicator.textContent)}`
+  );
+  check(
+    "a charging battery is identified as plugged in",
+    /plugged in/i.test(indicator.title) && indicator.textContent.includes("⚡"),
+    `title=${JSON.stringify(indicator.title)} text=${JSON.stringify(indicator.textContent)}`
+  );
+
+  battery.level = 0.15;
+  battery.charging = false;
+  battery.dispatchEvent(new window.Event("levelchange"));
+
+  check(
+    "a low discharging battery is visibly warned",
+    indicator.textContent === "15%" && indicator.classList.contains("low"),
+    `class=${indicator.className} text=${JSON.stringify(indicator.textContent)}`
+  );
+}
+
 
 await testAReplayTheServerDeclinesIsKeptForStaff();
 await testAReplayThatIsRecordedLeavesNothingBehind();
@@ -2103,6 +2139,7 @@ await testACachedShellRecoversOnceTheServerAnswers();
 await testAServerErrorIsNotMistakenForAnAnswer();
 await testANormallyLoadedPageStillTrustsItsSeed();
 await testTheKioskRunsWithoutServiceWorkerSupport();
+await testTheBatteryIndicatorTracksLevelAndChargingState();
 
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

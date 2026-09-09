@@ -121,6 +121,7 @@ def test_the_kiosk_script_url_is_versioned(client):
     page = client.get("/")
 
     assert '<script src="/static/kiosk.js?v=' in page.text
+    assert 'id="batteryStatus"' in page.text
 
 
 def test_every_icon_the_page_itself_links_resolves(client):
