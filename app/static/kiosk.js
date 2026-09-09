@@ -574,7 +574,13 @@
       ? alumni.class_year
       : null;
     setResultName(
-      member ? member.full_name : alumni ? alumni.full_name : "Card not recognized",
+      member
+        ? member.full_name
+        : alumni
+        ? alumni.full_name
+        : result.submitted_type === "manual_puid"
+        ? "ID not recognized"
+        : "Card not recognized",
       classYear ? "’" + String(classYear).slice(-2) : ""
     );
 
@@ -595,12 +601,14 @@
     el("resultBand").className = "band " + bandClassFor(result.outcome);
     el("resultMessage").textContent = result.message;
 
-    // An unrecognized card is handed off to the staff enrollment page, with the
-    // card value carried across so nobody has to tap twice.
+    // An unrecognized physical card is handed off to enrollment, with its value
+    // carried across so nobody has to tap twice. A mistyped PUID or NetID is not
+    // a card value and must never be offered as one.
     const unknown = result.outcome === "unknown_credential";
+    const unknownCard = unknown && result.submitted_type !== "manual_puid";
     const enrollLink = el("enrollLink");
-    enrollLink.hidden = !unknown;
-    if (unknown) {
+    enrollLink.hidden = !unknownCard;
+    if (unknownCard) {
       const value = result.submitted_value || "";
       enrollLink.href = "/enroll?value=" + encodeURIComponent(value);
     }
@@ -727,13 +735,12 @@
 
   /* ---------------- manual ID entry ----------------
    *
-   * A PUID is exactly nine decimal digits, and the box is checked twice: the
-   * keystroke filter is what a member actually feels, and the check in
-   * submitManual is what decides, since a paste, an autofill or a stray
-   * setAttribute can all put text in the box without a keystroke ever
-   * happening. */
+   * The box accepts either a nine-digit PUID or a 2–8 character NetID. It is
+   * checked on input and again on submit because a paste or autofill can put
+   * text in the box without a keystroke ever happening. */
 
   const PUID_RE = /^[0-9]{9}$/;
+  const NETID_RE = /^[a-z][a-z0-9]{1,7}$/;
 
   function manualFail(message) {
     const error = el("manualError");
@@ -742,22 +749,22 @@
     manualInput.focus();
   }
 
-  // Anything that is not a digit never survives being typed, so the member sees
-  // the rule rather than being told about it after the fact.
   manualInput.addEventListener("input", () => {
-    const cleaned = manualInput.value.replace(/[^0-9]/g, "").slice(0, 9);
+    const cleaned = manualInput.value.replace(/\s/g, "").toLowerCase().slice(0, 9);
     if (cleaned !== manualInput.value) manualInput.value = cleaned;
-    if (PUID_RE.test(cleaned)) el("manualError").hidden = true;
+    if (PUID_RE.test(cleaned) || NETID_RE.test(cleaned)) {
+      el("manualError").hidden = true;
+    }
   });
 
   function submitManual() {
-    const value = manualInput.value.replace(/[^0-9]/g, "");
+    const value = manualInput.value.replace(/\s/g, "").toLowerCase();
     if (!value) {
-      manualFail("Enter your Princeton ID number first.");
+      manualFail("Enter your PUID or NetID first.");
       return;
     }
-    if (!PUID_RE.test(value)) {
-      manualFail("A Princeton ID is nine digits, like 905551234.");
+    if (!PUID_RE.test(value) && !NETID_RE.test(value)) {
+      manualFail("Enter a 9-digit PUID or a 2–8 character NetID, like ak9981.");
       return;
     }
     el("manualError").hidden = true;
@@ -1195,7 +1202,7 @@
   }
 
   // A class year is four digits and nothing else, filtered as it is typed for
-  // the same reason the PUID box is: the member feels the rule rather than
+  // the same reason the typed-ID box is: the member feels the rule rather than
   // being told about it after the fact.
   el("alumniClassYear").addEventListener("input", () => {
     const box = el("alumniClassYear");

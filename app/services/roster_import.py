@@ -4,7 +4,8 @@ The club gets its roster as a spreadsheet — names, PUIDs, NetIDs, class years,
 plans — long before anybody has tapped a card. Cards are bound one at a time at
 the kiosk, so this importer deliberately has no card column: it fills the
 members table and leaves every one of those people on the enrollment-gaps list
-until they turn up and tap. They can eat in the meantime by typing their PUID.
+until they turn up and tap. They can eat in the meantime by typing their PUID
+or NetID.
 
 Two properties the rest of the design leans on:
 

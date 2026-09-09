@@ -2,8 +2,8 @@
 
 Design rules that the tests pin down:
 
-  * The path is identical whether a card was tapped or a PUID was typed. Only
-    `entry_method` differs, so the two can never drift apart in behaviour.
+  * The path is identical whether a card was tapped or a PUID/NetID was typed.
+    Only `entry_method` differs, so the two can never drift apart in behaviour.
   * Being over the weekly allotment NEVER blocks. It records the meal, flags it
     as an overage and shows an amber banner. Nobody gets turned away at the
     door over a counter.
@@ -136,9 +136,14 @@ def process_scan(
 
     member, credential = credential_service.resolve(db, value, credential_type)
     if member is None:
+        typed_id = credential_type == CredentialType.MANUAL_PUID.value
         return ScanResult(
             outcome=ScanOutcome.UNKNOWN_CREDENTIAL,
-            message="Card not recognized — see staff to enroll.",
+            message=(
+                "ID not recognized — check your PUID or NetID."
+                if typed_id
+                else "Card not recognized — see staff to enroll."
+            ),
             submitted_value=value,
             submitted_type=credential_type,
         )

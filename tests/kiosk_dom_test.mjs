@@ -27,7 +27,8 @@ function check(name, condition, detail) {
 
 const AVERY = {
   id: 1, first_name: "Avery", last_name: "Chen", full_name: "Avery Chen",
-  puid: "905550001", class_year: 2028, plan_type: "plan_19", status: "active",
+  puid: "905550001", netid: "ac123", class_year: 2028,
+  plan_type: "plan_19", status: "active",
   photo_url: null,
 };
 
@@ -54,8 +55,8 @@ function boot(configOverrides = {}, respond = null, beforeEval = null) {
     if (answered === OFFLINE) {
       return Promise.reject(new TypeError("Failed to fetch"));
     }
-    // Every card value is unknown; every PUID resolves. That asymmetry is what
-    // makes a mis-routed submit obvious.
+    // Every card value is unknown; every manually typed ID resolves. That
+    // asymmetry is what makes a mis-routed submit obvious.
     const isScan = String(url).includes("/api/scan");
     const payload =
       answered ||
@@ -234,10 +235,9 @@ async function testEmptySubmitIsRefused() {
   dom.window.close();
 }
 
-/* A PUID is nine decimal digits and nothing else. The filter is what a member
- * feels while typing; the submit check is what actually decides, because a
- * paste never goes through a keystroke. */
-async function testTheIdBoxTakesNineDigitsAndNothingElse() {
+/* The typed-ID box accepts exactly the two identifiers a member can use: a
+ * nine-digit PUID or a 2–8 character NetID beginning with a letter. */
+async function testTheIdBoxTakesAPuidOrNetid() {
   const { window, calls, dom } = boot();
   const doc = window.document;
   const box = doc.getElementById("manualInput");
@@ -252,17 +252,9 @@ async function testTheIdBoxTakesNineDigitsAndNothingElse() {
     );
   const scans = () => calls.filter((c) => String(c.url).includes("/api/scan"));
 
-  paste("90a-555 1234x");
-  check("letters, spaces and dashes never survive being typed",
-        box.value === "905551234", `box held ${JSON.stringify(box.value)}`);
-
-  paste("9055512349999");
-  check("and the box stops at nine digits",
-        box.value === "905551234", `box held ${JSON.stringify(box.value)}`);
-
-  // The attributes the browser itself enforces, so the rule survives a member
-  // who reaches the box before kiosk.js has loaded.
-  check("the markup states the same rule", box.getAttribute("pattern") === "[0-9]{9}" &&
+  const pattern = box.getAttribute("pattern") || "";
+  check("the markup states both ID formats", pattern.includes("[0-9]{9}") &&
+        pattern.includes("[A-Za-z][A-Za-z0-9]{1,7}") &&
         box.getAttribute("maxlength") === "9",
         `pattern=${box.getAttribute("pattern")} maxlength=${box.getAttribute("maxlength")}`);
 
@@ -271,24 +263,28 @@ async function testTheIdBoxTakesNineDigitsAndNothingElse() {
   await settle();
   check("a short ID is not submitted", scans().length === 0,
         `sent ${JSON.stringify(scans().map((s) => s.body))}`);
-  check("and the box says how long a PUID is",
+  check("and the box explains both valid alternatives",
         doc.getElementById("manualError").hidden === false &&
-          doc.getElementById("manualError").textContent.includes("nine digits"),
+          doc.getElementById("manualError").textContent.includes("PUID") &&
+          doc.getElementById("manualError").textContent.includes("NetID"),
         `error read ${JSON.stringify(doc.getElementById("manualError").textContent)}`);
 
   box.value = "9055512a4";
   submit();
   await settle();
-  check("neither is one with a letter in it", scans().length === 0,
+  check("neither is a value that matches neither format", scans().length === 0,
         `sent ${JSON.stringify(scans().map((s) => s.body))}`);
 
-  paste("905550001");
+  paste(" AC123 ");
+  check("a NetID is normalized while it is typed", box.value === "ac123",
+        `box held ${JSON.stringify(box.value)}`);
   submit();
   await settle();
-  check("a full nine digits goes through", scans().length === 1,
+  check("a valid NetID goes through", scans().length === 1,
         `got ${scans().length}`);
-  check("as the typed PUID, unchanged",
-        scans().length === 1 && scans()[0].body.value === "905550001",
+  check("as a normalized typed ID",
+        scans().length === 1 && scans()[0].body.value === "ac123" &&
+          scans()[0].body.credential_type === "manual_puid",
         scans().length ? `value was ${JSON.stringify(scans()[0].body.value)}` : "no scan");
 
   dom.window.close();
@@ -322,6 +318,31 @@ async function testUnknownCardOffersTheEnrollmentPage() {
   check("the enrollment link carries the card value across, so nobody taps twice",
         link.getAttribute("href") === "/enroll?value=A1B2C3D4",
         `href was ${link.getAttribute("href")}`);
+
+  dom.window.close();
+}
+
+async function testUnknownTypedIdDoesNotOfferCardEnrollment() {
+  const unknownTypedId = (url, body) =>
+    url.includes("/api/scan") && body.credential_type === "manual_puid"
+      ? { outcome: "unknown_credential", ok: false,
+          message: "ID not recognized — check your PUID or NetID.", warnings: [],
+          member: null, submitted_value: body.value,
+          submitted_type: body.credential_type, result_seconds: 6 }
+      : null;
+  const { window, dom } = boot({}, unknownTypedId);
+  const doc = window.document;
+
+  doc.getElementById("manualInput").focus();
+  typeAll(window, "nobody");
+  typeKey(window, "Enter");
+  await settle();
+
+  check("an unknown typed ID is described as an ID",
+        doc.getElementById("resultName").textContent === "ID not recognized",
+        `name was ${JSON.stringify(doc.getElementById("resultName").textContent)}`);
+  check("an unknown typed ID is not offered as a card to enroll",
+        doc.getElementById("enrollLink").hidden === true);
 
   dom.window.close();
 }
@@ -1289,9 +1310,10 @@ await testMealBannerAsksTheServerWhenTheWindowCloses();
 await testMealBannerAsksTheServerWhenTheNextMealOpens();
 await testKeyboardPuidEntry();
 await testEmptySubmitIsRefused();
-await testTheIdBoxTakesNineDigitsAndNothingElse();
+await testTheIdBoxTakesAPuidOrNetid();
 await testTheNoCardButtonIsGone();
 await testUnknownCardOffersTheEnrollmentPage();
+await testUnknownTypedIdDoesNotOfferCardEnrollment();
 await testCardStillWorksOnIdle();
 await testStrayDigitsDoNotLeakIntoTheNextScan();
 await testBetweenMealsBothNeighbouringMealsAreOffered();

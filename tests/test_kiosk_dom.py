@@ -1,7 +1,7 @@
 """Runs the kiosk's JavaScript against the real rendered page under jsdom.
 
 The kiosk has two input paths competing for one keyboard: an HID reader that
-types card values into a hidden sink, and a human typing a PUID. Which one owns
+types card values into a hidden sink, and a human typing a PUID or NetID. Which one owns
 focus is not expressible in a Python test, and getting it wrong silently
 misroutes a member's ID as a card number — so it is tested here, for real.
 

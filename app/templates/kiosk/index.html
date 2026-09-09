@@ -86,16 +86,17 @@
            already stuck, and one more tap to find the box is one too many. -->
       <div id="manual" class="panel narrow">
         <div class="panel-head">
-          <h2>Enter your Princeton ID</h2>
-          <p class="sub">Type the 9-digit number printed on your TigerCard.</p>
+          <h2>Enter your PUID or NetID</h2>
+          <p class="sub">Use your 9-digit PUID or Princeton NetID.</p>
         </div>
-        <!-- A PUID is exactly nine decimal digits. maxlength and pattern stop most
-             of what a member can type; kiosk.js enforces the same rule on every
-             keystroke and again on submit, because neither attribute holds against
-             a paste and neither one runs outside a <form>. -->
-        <input id="manualInput" class="text-input big" inputmode="numeric"
-               autocomplete="off" placeholder="905551234" maxlength="9"
-               pattern="[0-9]{9}" aria-describedby="manualError">
+        <!-- A PUID is nine digits; a NetID is 2–8 alphanumeric characters and
+             starts with a letter. kiosk.js enforces the same alternatives on
+             input and submit because pattern does not run outside a form. -->
+        <input id="manualInput" class="text-input big" inputmode="text"
+               autocapitalize="none" autocorrect="off" spellcheck="false"
+               autocomplete="off" placeholder="905551234 or ak9981" maxlength="9"
+               pattern="(?:[0-9]{9}|[A-Za-z][A-Za-z0-9]{1,7})"
+               aria-describedby="manualError">
         <p id="manualError" class="warn" hidden></p>
         <div class="panel-actions">
           <button id="manualSubmit" class="action-btn">Check in</button>
@@ -358,6 +359,6 @@
      worker's network-first policy. A kiosk may keep one Chromium profile for
      years; changing this token guarantees a corrected script cannot be hidden
      by an older HTTP-cache entry. #}
-  <script src="/static/kiosk.js?v=3"></script>
+  <script src="/static/kiosk.js?v=4"></script>
 </body>
 </html>

@@ -3,8 +3,9 @@
 The rest of the app deals in (type, value) pairs and never in "CSNs". Two
 consequences worth keeping:
 
-  * A manual PUID is resolved against members.puid directly. It needs no
-    enrollment, so the club is usable on day one, before anyone has tapped in.
+  * A manually typed ID is resolved against members.puid or members.netid
+    directly. It needs no card enrollment, so the club is usable on day one,
+    before anyone has tapped in.
   * If TigerCards turn out to emit a randomized Seos serial, a different reader
     emitting PROX or PACS values drops in here without touching the rules.
 """
@@ -17,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Credential, CredentialType, EntryMethod, Member
+from app.services import netid as netid_service
 
 # A TigerCard CSN is a 16-digit hexadecimal serial, and a PUID is nine decimal
 # digits. Both are checked at enrollment only: that is where a mistyped or
@@ -69,15 +71,20 @@ def resolve(
 ) -> tuple[Member | None, Credential | None]:
     """Look up the member behind a scan or a typed ID.
 
-    Returns (member, credential). `credential` is None for manual PUID entry —
-    no card was involved, and attendance.credential_id is nullable for exactly
-    this reason.
+    Returns (member, credential). `credential` is None for a manually typed
+    PUID or NetID — no card was involved, and attendance.credential_id is
+    nullable for exactly this reason.
     """
     if credential_type == CredentialType.MANUAL_PUID.value:
         puid = normalize_puid(value)
-        if not puid:
+        if is_valid_puid(puid):
+            member = db.scalar(select(Member).where(Member.puid == puid))
+            return member, None
+
+        netid = netid_service.normalize_netid(value)
+        if not netid_service.is_valid_netid(netid):
             return None, None
-        member = db.scalar(select(Member).where(Member.puid == puid))
+        member = db.scalar(select(Member).where(Member.netid == netid))
         return member, None
 
     normalized = normalize_value(value)

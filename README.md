@@ -1,10 +1,10 @@
 # ColoMealCheck
 
 Meal attendance for the Colonial Club of Princeton. Members tap their TigerCard
-on a reader at the dining room door — or type their PUID if they left it in
-their room — and the system records the meal, tracks it against their weekly
-plan (19, 14 or the 9-meal RCA/PAA plan), and manages the two guest meals each
-member gets per month.
+on a reader at the dining room door — or type their PUID or NetID if they left
+it in their room — and the system records the meal, tracks it against their
+weekly plan (19, 14 or the 9-meal RCA/PAA plan), and manages the two guest meals
+each member gets per month.
 
 The server runs in Docker on the club LAN. The kiosk is a laptop with an HID
 reader, running Chrome pointed at it.
@@ -32,8 +32,8 @@ pick a fallback:
 - **125 kHz Prox side.** If TigerCards are dual-technology, the Prox number is
   stable and needs no key. Use a prox reader with a Wiegand-to-USB converter and
   enroll with `credential_type: "prox"` — nothing else changes.
-- **Manual PUID only.** Already built and fully supported. Members type their ID;
-  every rule behaves identically. Slower at the door, but correct.
+- **Manual ID entry.** Already built and fully supported. Members type their
+  PUID or NetID; every rule behaves identically. Slower at the door, but correct.
 - **Talk to the ID office.** A reader keyed to Princeton's format outputs the
   real PACS number tied to the printed PUID. Enroll with `"pacs"`.
 
@@ -70,7 +70,7 @@ The app is at `http://<server-host>:8000`:
 
 | Path | What it is |
 | --- | --- |
-| `/` | The kiosk. Tap a card, or click into the **Enter your Princeton ID** box and type a PUID — nine digits, nothing else gets in. |
+| `/` | The kiosk. Tap a card, or type either a nine-digit PUID or a Princeton NetID into the ID box. |
 | | A banner across the top reads **Now serving Dinner · 57:46 left** while a meal is running, and **Next Meal: Breakfast · in 12:30:15** when it is not. Both countdowns tick live. |
 | `/enroll` | Staff page for enrolling a member and their card. Gated by the staff PIN. |
 | `/admin` | The office: roster, analytics, schedule, reports, audit. Gated by a staff login. |
@@ -313,7 +313,7 @@ unless `KIOSK_BRIDGE_URL` is set.
 ## How the rules work
 
 Every rule lives in `app/services/scan.py::process_scan`, and the entry method
-(tapped card vs typed PUID) changes nothing except one recorded field.
+(tapped card vs typed PUID/NetID) changes nothing except one recorded field.
 
 | Situation | What happens |
 | --- | --- |
@@ -411,10 +411,11 @@ code.
 
 ## Day one, before anyone has a card
 
-Manual PUID entry needs no enrollment. Create the roster in `/admin/members`,
-and members can eat immediately by typing their ID at the kiosk while cards get
-linked over the first week or two. `/admin/reports` has an **enrollment gaps**
-list — active members with no card linked — which is the list to work through.
+Manual PUID or NetID entry needs no card enrollment. Create the roster in
+`/admin/members`, and members can eat immediately by typing either ID at the
+kiosk while cards get linked over the first week or two. `/admin/reports` has
+an **enrollment gaps** list — active members with no card linked — which is the
+list to work through.
 
 ### Importing the roster from a spreadsheet
 
@@ -498,7 +499,7 @@ rather than in front of a club officer.
 `tests/test_kiosk_dom.py` runs the real `kiosk.js` against the real rendered
 kiosk page under jsdom. It exists because the kiosk has two input paths
 competing for one keyboard — the HID reader (which *is* a keyboard, typing into
-a hidden sink) and a person typing their PUID. Getting focus wrong there
+a hidden sink) and a person typing their PUID or NetID. Getting focus wrong there
 silently submits someone's ID as a card number, or appends a previous person's
 half-typed digits to the next card scan. Both have happened.
 

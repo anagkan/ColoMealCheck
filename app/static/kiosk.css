@@ -588,7 +588,7 @@ body.kiosk-home {
 .field-label { font-size: 0.92rem; color: var(--ink-dim); }
 
 /* Sits under the input it belongs to and appears as staff type, so a bad card
-   read or a mistyped PUID is caught at the field rather than on submit. Boxed
+   read or a mistyped ID is caught at the field rather than on submit. Boxed
    in the same red the stop screen uses, so it reads as a problem from across
    the desk without anyone having to focus on the words. */
 .field-error {

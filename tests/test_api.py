@@ -164,15 +164,16 @@ class TestKioskPage:
         """The typed-ID route must be visible without staff help: the ID box is
         on the page itself, so a member with no card clicks straight into it."""
         page = client.get("/").text
-        assert "Enter your Princeton ID" in page
+        assert "Enter your PUID or NetID" in page
         assert 'id="manualInput"' in page
         assert "noCardBtn" not in page
 
-    def test_kiosk_id_box_accepts_only_a_nine_digit_puid(self, client):
+    def test_kiosk_id_box_accepts_a_puid_or_netid(self, client):
         """Enforced in kiosk.js too, but the markup has to carry the rule for a
         member who reaches the box before the script has loaded."""
         page = client.get("/").text
-        assert 'pattern="[0-9]{9}"' in page
+        assert '[0-9]{9}' in page
+        assert '[A-Za-z][A-Za-z0-9]{1,7}' in page
         assert 'maxlength="9"' in page
 
     def test_status_endpoint_answers(self, client):
@@ -299,6 +300,26 @@ class TestScanApi:
         ).json()
         assert card.keys() == typed.keys()
         assert typed["member"]["id"] == card["member"]["id"]
+
+    def test_typed_netid_uses_the_same_endpoint_and_shape(
+        self, client, member, wide_service, db
+    ):
+        member.netid = "ac123"
+        db.commit()
+
+        typed = client.post(
+            "/api/scan", json={"value": " AC123 ", "credential_type": "manual_puid"}
+        ).json()
+
+        assert typed["outcome"] == "checked_in"
+        assert typed["member"]["id"] == member.id
+
+    def test_unknown_typed_id_is_described_as_an_id(self, client):
+        body = client.post(
+            "/api/scan", json={"value": "nobody", "credential_type": "manual_puid"}
+        ).json()
+        assert body["outcome"] == "unknown_credential"
+        assert body["message"].startswith("ID not recognized")
 
     def test_unknown_card_is_reported_with_the_value_echoed_back(self, client):
         body = client.post("/api/scan", json={"value": "NOSUCHCARD"}).json()

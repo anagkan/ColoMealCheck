@@ -12,7 +12,7 @@ class ScanRequest(BaseModel):
     """One endpoint serves both the reader and the keypad.
 
     `credential_type` is the only thing that differs between a tapped card and
-    a typed PUID — everything downstream is shared.
+    a typed PUID or NetID — everything downstream is shared.
     """
 
     value: str = Field(min_length=1, max_length=128)
@@ -46,7 +46,7 @@ class GuestRequest(BaseModel):
     # Who is hosting, named either of two ways, because the kiosk does not always
     # have the same thing to hand. `member_id` is a host the server has already
     # resolved — the ordinary path, where a card tap came back with a member on
-    # it. `host_value` is a host's card or typed PUID, still unresolved: during
+    # it. `host_value` is a host's card or typed PUID/NetID, still unresolved: during
     # an outage the kiosk queued that tap and never got a member back, so the
     # credential is all it has. The route accepts either and insists on one.
     member_id: int | None = None

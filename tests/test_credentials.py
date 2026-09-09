@@ -34,6 +34,24 @@ class TestNormalization:
         assert found.id == member.id
         assert credential is None  # no card was involved
 
+    def test_netid_lookup_is_case_insensitive(self, db, make_member):
+        member = make_member(puid="905551234")
+        member.netid = "ak9981"
+        db.commit()
+
+        found, credential = credential_service.resolve(
+            db, "  AK9981 ", CredentialType.MANUAL_PUID.value
+        )
+
+        assert found.id == member.id
+        assert credential is None  # a typed NetID is not a card credential
+
+    @pytest.mark.parametrize("value", ["not-a-netid", "12345", "a"])
+    def test_malformed_typed_ids_resolve_to_nobody(self, db, value):
+        assert credential_service.resolve(
+            db, value, CredentialType.MANUAL_PUID.value
+        ) == (None, None)
+
     def test_empty_input_resolves_to_nobody(self, db):
         assert credential_service.resolve(db, "", CredentialType.CSN.value) == (None, None)
         assert credential_service.resolve(db, "   ", CredentialType.MANUAL_PUID.value) == (
