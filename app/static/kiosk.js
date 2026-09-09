@@ -156,7 +156,12 @@
       // "[object Object]" in front of a queue.
       const detail = typeof body.detail === "string" ? body.detail : "";
       const error = new Error(detail || `Request failed (${response.status})`);
-      error.status = response.status;
+      // A 4xx is the application refusing this particular request, so retrying
+      // it cannot help. A 5xx is different: a reverse proxy such as Tailscale
+      // Serve returns 502 while the API behind it is down. Leave those errors
+      // status-less so the callers treat them like an unreachable server and
+      // retain the meal in the offline queue for replay.
+      if (response.status < 500) error.status = response.status;
       throw error;
     }
     return response.json();

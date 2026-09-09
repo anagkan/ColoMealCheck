@@ -1447,6 +1447,62 @@ async function testAReplayThatIsRecordedLeavesNothingBehind() {
   );
 }
 
+/* Tailscale Serve remains reachable while its backend is stopped and answers
+ * POSTs with 502. fetch() resolves in that case, so this must follow the same
+ * queue path as a rejected fetch rather than becoming "not recorded". */
+async function testAProxyFailureQueuesAndReplaysTheScan() {
+  const { window } = boot();
+  const realFetch = window.fetch;
+  let proxyDown = true;
+  window.fetch = (url, options) => {
+    if (proxyDown && String(url).includes("/api/scan")) {
+      return Promise.resolve({
+        ok: false,
+        status: 502,
+        json: () => Promise.reject(new Error("proxy response is not JSON")),
+      });
+    }
+    return realFetch(url, options);
+  };
+
+  // Use the harness's enrolled PUID so the replay receives an attendance_id.
+  window.document.getElementById("manualInput").focus();
+  typeAll(window, "905550001");
+  typeKey(window, "Enter");
+  await settle();
+
+  check(
+    "a proxy 502 queues the scan as an offline meal",
+    stored(window, QUEUE_KEY).length === 1,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+  check(
+    "a proxy 502 tells the member the meal was saved offline",
+    /saved offline/i.test(window.document.getElementById("resultName").textContent),
+    `result read ${JSON.stringify(window.document.getElementById("resultName").textContent)}`
+  );
+  check(
+    "a proxy 502 does not mark the scan as permanently unrecorded",
+    stored(window, UNRECORDED_KEY).length === 0,
+    `unrecorded held ${JSON.stringify(stored(window, UNRECORDED_KEY))}`
+  );
+
+  proxyDown = false;
+  window.dispatchEvent(new window.Event("online"));
+  await settle();
+
+  check(
+    "the scan queued behind a proxy 502 replays after recovery",
+    stored(window, QUEUE_KEY).length === 0,
+    `queue held ${JSON.stringify(stored(window, QUEUE_KEY))}`
+  );
+  check(
+    "a successful proxy-error replay leaves no unrecorded warning",
+    stored(window, UNRECORDED_KEY).length === 0,
+    `unrecorded held ${JSON.stringify(stored(window, UNRECORDED_KEY))}`
+  );
+}
+
 /* A laptop closed on Friday night and reopened on Monday would replay Friday's
  * dinner, the server would refuse to believe a timestamp that old and file it
  * under Monday instead — wrong service date, wrong meal week, wrong allotment,
@@ -2031,6 +2087,7 @@ async function testTheKioskRunsWithoutServiceWorkerSupport() {
 
 await testAReplayTheServerDeclinesIsKeptForStaff();
 await testAReplayThatIsRecordedLeavesNothingBehind();
+await testAProxyFailureQueuesAndReplaysTheScan();
 await testAScanTooOldToFileCorrectlyIsNeverSent();
 await testARecentQueuedScanIsStillReplayed();
 await testAFullDiskStillAnswersTheMember();
