@@ -116,6 +116,13 @@ def test_the_kiosk_page_links_the_manifest(client):
     assert '<link rel="manifest" href="/manifest.webmanifest">' in page.text
 
 
+def test_the_kiosk_script_url_is_versioned(client):
+    """A long-lived Chromium profile must not hide a corrected kiosk script."""
+    page = client.get("/")
+
+    assert '<script src="/static/kiosk.js?v=' in page.text
+
+
 def test_every_icon_the_page_itself_links_resolves(client):
     """The manifest is not the only place icons are named.
 

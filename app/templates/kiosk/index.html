@@ -353,6 +353,10 @@
       bridgeUrl: {{ bridge_url | tojson }}
     };
   </script>
-  <script src="/static/kiosk.js"></script>
+  {# Version the script URL as a second line of defence behind the service
+     worker's network-first policy. A kiosk may keep one Chromium profile for
+     years; changing this token guarantees a corrected script cannot be hidden
+     by an older HTTP-cache entry. #}
+  <script src="/static/kiosk.js?v=2"></script>
 </body>
 </html>
