@@ -70,6 +70,18 @@ def test_the_worker_leaves_scans_alone(client):
     assert 'request.method !== "GET"' in source
 
 
+def test_the_worker_falls_back_when_a_proxy_reports_backend_failure(client):
+    """A reachable reverse proxy reports a stopped API as 502, not a fetch error.
+
+    Tailscale Serve stays online when the application behind it is stopped. The
+    worker must treat that 5xx response as an outage or Chromium displays the
+    proxy error instead of starting the cached door screen.
+    """
+    source = (STATIC / "sw.js").read_text()
+
+    assert "response.status < 500" in source
+
+
 def test_manifest_parses_and_points_at_the_kiosk(client):
     response = client.get("/manifest.webmanifest")
 

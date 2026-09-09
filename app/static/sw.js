@@ -131,6 +131,7 @@ async function networkFirst(request, url) {
       const cache = await caches.open(CACHE);
       await cache.put(key, response.clone());
     }
+
     return response;
   });
 
@@ -143,13 +144,18 @@ async function networkFirst(request, url) {
     setTimeout(() => resolve(null), NETWORK_TIMEOUT_MS)
   );
 
+  let response = null;
   try {
-    const response = await Promise.race([network, timeout]);
-    if (response) return response;
+    response = await Promise.race([network, timeout]);
+    // A reverse proxy can remain reachable while its backend is down. In that
+    // case fetch() resolves normally with a 5xx response instead of rejecting
+    // (Tailscale Serve returns 502), but from the kiosk's perspective this is
+    // still an outage. Try the cached shell before showing the proxy error.
+    if (response && response.status < 500) return response;
   } catch (err) {
     /* unreachable or refused — fall through to the cache */
   }
-  return (await fromCache(request, url)) || network;
+  return (await fromCache(request, url)) || response || network;
 }
 
 self.addEventListener("fetch", (event) => {
