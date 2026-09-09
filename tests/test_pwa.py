@@ -134,6 +134,13 @@ def test_the_door_screen_uses_the_viewport_layout_and_versioned_css(client):
     css = client.get("/static/kiosk.css").text
     assert "body.kiosk-home" in css
     assert "@media (max-height: 960px)" in css
+    assert "body.kiosk-home .kiosk-foot" in css
+
+    # The credit remains two deliberately ordered rows even in compact mode.
+    byline = page.text.index("Made by Anagh Kanagala")
+    source = page.text.index("Source on GitHub")
+    assert byline < source
+    assert "flex-direction: column" in css
 
     # Enrollment is deliberately tall and must remain a scrolling document.
     enroll = client.get("/enroll")

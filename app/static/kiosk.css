@@ -706,7 +706,11 @@ select.text-input { appearance: none; }
   body.kiosk-home .meal-banner-countdown { font-size: 1.1rem; }
 
   body.kiosk-home #stage {
-    flex: 1 1 auto;
+    /* Two shares here and one in .kiosk-foot divide the spare height into
+       thirds. Because the stage centres its contents, one third lands below
+       the ID panel; the footer's share then lands below its buttons. That puts
+       the button row exactly halfway between the panel and the credit. */
+    flex: 2 1 auto;
     min-height: 0;
     padding: 0.65rem 1.15rem;
     overflow: hidden;
@@ -762,9 +766,9 @@ select.text-input { appearance: none; }
   body.kiosk-home .anyway-when { font-size: 0.8rem; }
 
   body.kiosk-home .kiosk-foot {
-    flex: 0 0 auto;
+    flex: 1 1 auto;
     gap: 0.7rem;
-    padding: 0 1.15rem 0.45rem;
+    padding: 0 1.15rem 0.65rem;
   }
   body.kiosk-home #guestMealBtn,
   body.kiosk-home #alumniMealBtn {
@@ -774,9 +778,9 @@ select.text-input { appearance: none; }
   }
   body.kiosk-home .kiosk-credit {
     flex: 0 0 auto;
-    flex-direction: row;
+    flex-direction: column;
     justify-content: center;
-    gap: 0.8rem;
+    gap: 0.15rem;
     padding: 0.35rem 1.15rem;
     font-size: 0.72rem;
   }
