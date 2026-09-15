@@ -769,6 +769,9 @@
     }
     el("manualError").hidden = true;
     manualInput.value = "";
+    // Hand the keyboard back as soon as the ID is submitted, including while
+    // the server is answering. The next card must land in the reader input.
+    claimReader();
     submitScan(value, "manual_puid");
   }
 

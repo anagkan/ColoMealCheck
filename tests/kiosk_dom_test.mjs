@@ -215,6 +215,61 @@ async function testKeyboardPuidEntry() {
   dom.window.close();
 }
 
+async function testTypedEntryReturnsTheKeyboardToTheReader() {
+  for (const value of ["905550001", "ac123"]) {
+    for (const submitWith of ["Enter", "button"]) {
+      let dismissResult;
+      const { window, calls, dom } = boot({}, null, (window) => {
+        const setTimeout = window.setTimeout.bind(window);
+        window.setTimeout = (callback, delay, ...args) => {
+          // Exercise the actual result timeout without waiting six seconds.
+          if (delay === 6000) {
+            dismissResult = callback;
+            return setTimeout(() => {}, delay);
+          }
+          return setTimeout(callback, delay, ...args);
+        };
+      });
+      const doc = window.document;
+      const manual = doc.getElementById("manualInput");
+      const reader = doc.getElementById("cardInput");
+      const label = `${value} submitted with ${submitWith}`;
+
+      manual.focus();
+      typeAll(window, value);
+      if (submitWith === "Enter") typeKey(window, "Enter");
+      else doc.getElementById("manualSubmit").click();
+
+      check(`${label}: clears the box and returns focus before the server answers`,
+            manual.value === "" && doc.activeElement === reader);
+      await settle();
+      check(`${label}: reader holds focus while the success message is visible`,
+            !doc.getElementById("result").hidden && doc.activeElement === reader);
+
+      check(`${label}: success message has an automatic dismissal`,
+            typeof dismissResult === "function");
+      if (dismissResult) dismissResult();
+      check(`${label}: dismissal leaves both inputs empty and the reader focused`,
+            !doc.getElementById("idle").hidden && manual.value === "" &&
+              reader.value === "" && doc.activeElement === reader);
+
+      typeAll(window, "A1B2C3D4E5F60708");
+      typeKey(window, "Enter");
+      await settle();
+      const scans = calls.filter((c) => String(c.url).includes("/api/scan"));
+      check(`${label}: the next person's card is submitted intact as a CSN`,
+            scans.length === 2 && scans[0].body.value === value &&
+              scans[0].body.credential_type === "manual_puid" &&
+              scans[1].body.value === "A1B2C3D4E5F60708" &&
+              scans[1].body.credential_type === "csn");
+      doc.getElementById("doneBtn").click();
+      check(`${label}: finishing the card scan resets the inputs for the next member`,
+            manual.value === "" && reader.value === "" && doc.activeElement === reader);
+      dom.window.close();
+    }
+  }
+}
+
 async function testEmptySubmitIsRefused() {
   const { window, calls, dom } = boot();
   const doc = window.document;
@@ -1309,6 +1364,7 @@ await testMealBannerFallsBackWithNoSchedule();
 await testMealBannerAsksTheServerWhenTheWindowCloses();
 await testMealBannerAsksTheServerWhenTheNextMealOpens();
 await testKeyboardPuidEntry();
+await testTypedEntryReturnsTheKeyboardToTheReader();
 await testEmptySubmitIsRefused();
 await testTheIdBoxTakesAPuidOrNetid();
 await testTheNoCardButtonIsGone();
