@@ -60,6 +60,7 @@ class GuestRequest(BaseModel):
     guest_is_professor: bool = False
     staff_pin: str | None = None
     override_reason: str | None = Field(default=None, max_length=255)
+    attach: Literal["previous", "next"] | None = None
     # As on ScanRequest: set when the kiosk is replaying a guest meal it took
     # while the server was unreachable, so the meal lands in the period it was
     # eaten in rather than the one it happened to sync during.
@@ -84,6 +85,7 @@ class AlumniMealRequest(BaseModel):
     email: str = Field(default="", max_length=255)
     phone: str = Field(default="", max_length=32)
     netid: str = Field(default="", max_length=32)
+    attach: Literal["previous", "next"] | None = None
     # As on ScanRequest, for a meal the kiosk took while it was cut off.
     occurred_at: datetime | None = None
 
