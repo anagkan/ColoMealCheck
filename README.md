@@ -451,6 +451,24 @@ log with the filename and the counts.
 
 ---
 
+## Registering past meals
+
+Admins can select **Register past meal** on the attendance, Guest Meals, or
+Alumni Meals page. Choose the service date and meal type, click **Show meal
+periods**, and select the completed period and the member or guest/alumni details.
+Periods still serving and future periods cannot be registered this way.
+
+Member duplicate protection and weekly overage rules still apply. Guest meals
+use the selected month's quota; exceeding it requires an explicit override and
+reason. Family and professor exemptions still apply, and alumni meals require
+a name, class year, and email or phone.
+
+The meal appears on the selected date in attendance and reports, marked as an
+Admin entry. Its timestamp uses the period's start time; the audit log records
+who added it and when. Retired periods are available too. Since schedule and
+plan changes have no effective-date history, registration uses saved period
+times and the member's current plan and quota settings.
+
 ## Analytics
 
 `/admin/reports` answers *who owes what this week*. `/admin/analytics` answers

@@ -161,6 +161,7 @@ tr.voided { opacity: 0.5; text-decoration: line-through; }
 
 input, select, textarea, button { font: inherit; }
 input[type=text], input[type=date], input[type=time], input[type=password],
+input[type=number], input[type=email], input[type=tel],
 input:not([type]), select, textarea {
   padding: 0.45rem 0.6rem; border: 1px solid var(--line);
   border-radius: 7px; background: #fff; color: var(--ink);

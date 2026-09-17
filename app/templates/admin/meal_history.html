@@ -10,6 +10,9 @@
   <form class="inline" method="get" action="{{ '/admin/guests' if kind == 'guest' else '/admin/alumni' }}">
     <label class="tiny">Month in <input type="date" name="month" value="{{ month_start }}"></label>
     <button type="submit">Update</button>
+    {% if user.is_admin %}
+    <a class="btn" href="/admin/attendance/new?kind={{ kind }}&day={{ month_start }}">Register past meal</a>
+    {% endif %}
   </form>
 </header>
 

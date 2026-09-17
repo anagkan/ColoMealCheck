@@ -1,0 +1,89 @@
+{% extends "admin/base.html" %}
+{% block title %}Register past meal{% endblock %}
+{% block content %}
+<header class="page-head">
+  <div>
+    <h1>Register past meal</h1>
+    <p class="muted">Record a member, guest, or alumni meal after its serving period has ended.</p>
+  </div>
+  <a class="btn" href="/admin?day={{ day }}">View attendance</a>
+</header>
+
+{% if error %}<p class="alert" role="alert">{{ error }}</p>{% endif %}
+
+<form class="card inline" method="get" action="/admin/attendance/new">
+  <label>Service date
+    <input type="date" name="day" value="{{ day }}" max="{{ today }}" required>
+  </label>
+  <label>Meal type
+    <select name="kind">
+      {% for kind, label in [('member', 'Member meal'), ('guest', 'Guest meal'), ('alumni', 'Alumni meal')] %}
+      <option value="{{ kind }}" {% if values.get('kind') == kind %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <button type="submit">Show meal periods</button>
+</form>
+
+{% if periods %}
+{% set kind = values.get('kind', 'member') %}
+<form class="card form-grid" method="post" action="/admin/attendance/new">
+  <input type="hidden" name="day" value="{{ day }}">
+  <input type="hidden" name="kind" value="{{ kind }}">
+  <h2 class="full">{{ kind | capitalize }} meal · {{ day | prettydate }}</h2>
+  <label class="full">Meal period
+    <select name="meal_period_id" required>
+      <option value="">Choose a meal period</option>
+      {% for period in periods %}
+      <option value="{{ period.id }}" {% if values.get('meal_period_id') == period.id|string %}selected{% endif %}>
+        {{ period.name }} · {{ period.start_time.strftime('%I:%M %p') }}–{{ period.end_time.strftime('%I:%M %p') }}{% if period.end_time < period.start_time %} (ends next day){% endif %}{% if not period.is_active %} (retired){% endif %}
+      </option>
+      {% endfor %}
+    </select>
+  </label>
+  {% if kind in ['member', 'guest'] %}
+  <label class="full">{{ 'Hosting member' if kind == 'guest' else 'Member' }}
+    <select name="member_id" required>
+      <option value="">Choose a member</option>
+      {% for member in members %}
+      <option value="{{ member.id }}" {% if values.get('member_id') == member.id|string %}selected{% endif %}>{{ member.full_name }} · {{ member.puid }}{% if member.netid %} · {{ member.netid }}{% endif %}</option>
+      {% endfor %}
+    </select>
+  </label>
+  {% endif %}
+  {% if kind in ['guest', 'alumni'] %}
+  <label>First name <input name="first_name" value="{{ values.get('first_name', '') }}" maxlength="80" required></label>
+  <label>Last name <input name="last_name" value="{{ values.get('last_name', '') }}" maxlength="80" required></label>
+  <label>Princeton NetID{{ ' (optional)' if kind == 'alumni' else '' }}
+    <input name="netid" value="{{ values.get('netid', '') }}" maxlength="8">
+  </label>
+  {% endif %}
+  {% if kind == 'guest' %}
+  <label>Reason for no NetID
+    <input name="netid_reason" value="{{ values.get('netid_reason', '') }}" maxlength="255">
+  </label>
+  <label class="check"><input type="checkbox" name="guest_is_family" {% if values.get('guest_is_family') == 'on' %}checked{% endif %}>Family guest</label>
+  <label class="check"><input type="checkbox" name="guest_is_professor" {% if values.get('guest_is_professor') == 'on' %}checked{% endif %}>Professor guest</label>
+  <p class="muted small full">Enter a NetID or a reason for having none. Family and professor guests may omit both and do not use the host's monthly guest quota.</p>
+  <label class="check full"><input type="checkbox" name="override_quota" {% if values.get('override_quota') == 'on' %}checked{% endif %}>Override the monthly guest quota</label>
+  <label class="full">Override reason (required when overriding)
+    <input name="override_reason" value="{{ values.get('override_reason', '') }}" maxlength="255">
+  </label>
+  {% elif kind == 'alumni' %}
+  <label>Class year <input name="class_year" type="number" min="1900" max="2200" value="{{ values.get('class_year', '') }}" required></label>
+  <label>Email <input name="email" type="email" value="{{ values.get('email', '') }}" maxlength="255"></label>
+  <label>Phone <input name="phone" type="tel" value="{{ values.get('phone', '') }}" maxlength="32"></label>
+  <p class="muted small full">Provide at least one contact detail: email or phone.</p>
+  {% endif %}
+  <p class="muted small full">
+    {% if kind == 'member' %}The meal uses the selected week's allotment and the member's current meal plan.
+    {% elif kind == 'guest' %}The meal uses the selected month's guest quota and current quota settings.
+    {% endif %}
+    Periods use the saved schedule, including retired periods. The meal time is saved as the period's start time. Your account and the time you register it are kept in the audit log.
+  </p>
+  <div class="full"><button class="primary" type="submit">Register {{ kind }} meal</button></div>
+</form>
+{% else %}
+<p class="notice">No completed meal periods are available for {{ day | prettydate }}. Choose another date.</p>
+{% endif %}
+{% endblock %}

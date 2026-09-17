@@ -11,6 +11,9 @@
     <input type="date" name="day" value="{{ day }}">
     <button type="submit">Go</button>
     <a class="btn" href="/admin/reports/daily.csv?week={{ day }}">Export CSV</a>
+    {% if user.is_admin %}
+    <a class="btn" href="/admin/attendance/new?day={{ day }}">Register past meal</a>
+    {% endif %}
   </form>
 </header>
 

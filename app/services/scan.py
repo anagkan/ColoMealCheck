@@ -37,6 +37,7 @@ from app.services.netid import normalize_netid
 from app.services.periods import (
     PREVIOUS,
     AdjacentPeriod,
+    ResolvedPeriod,
     adjacent_period,
     adjacent_periods,
     resolve_period,
@@ -110,9 +111,14 @@ def _attached_note(attached: AdjacentPeriod) -> str:
 
 
 def _resolve_meal(
-    db: Session, moment: datetime, attach: str | None
+    db: Session, moment: datetime, attach: str | None,
+    meal: ResolvedPeriod | None = None,
 ) -> tuple[date, MealPeriod | None, AdjacentPeriod | None]:
     """Use the serving meal, or an explicitly chosen adjacent meal when closed."""
+    # Only the authenticated admin backfill service supplies an explicit meal.
+    # Resolving its start time again could pick a different, overlapping window.
+    if meal is not None:
+        return meal.service_date, meal.period, None
     resolved = resolve_period(db, moment)
     service_date = resolved.service_date
     period = resolved.period
@@ -156,6 +162,8 @@ def process_scan(
     force: bool = False,
     actor: str = "kiosk",
     attach: str | None = None,
+    meal: ResolvedPeriod | None = None,
+    entry_method: str | None = None,
 ) -> ScanResult:
     """Check a member in.
 
@@ -186,7 +194,7 @@ def process_scan(
             submitted_type=credential_type,
         )
 
-    service_date, period, attached = _resolve_meal(db, moment, attach)
+    service_date, period, attached = _resolve_meal(db, moment, attach, meal)
 
     # Both counters are read after the window is settled, never before, so they
     # are the counters for the week the meal is actually booked into.
@@ -236,7 +244,7 @@ def process_scan(
     attendance = Attendance(
         member_id=member.id,
         credential_id=credential.id if credential else None,
-        entry_method=credential_service.entry_method_for(credential_type),
+        entry_method=entry_method or credential_service.entry_method_for(credential_type),
         meal_period_id=period.id,
         service_date=service_date,
         scanned_at=moment,
@@ -325,6 +333,7 @@ def record_guest(
     guest_is_family: bool = False,
     guest_is_professor: bool = False,
     attach: str | None = None,
+    meal: ResolvedPeriod | None = None,
 ) -> ScanResult:
     """Log a guest meal against a host's monthly benefit.
 
@@ -349,7 +358,7 @@ def record_guest(
     netid_reason = "" if netid else (guest_netid_reason or "").strip()
     display_name = f"{first} {last}".strip() or "Guest"
 
-    service_date, period, attached = _resolve_meal(db, moment, attach)
+    service_date, period, attached = _resolve_meal(db, moment, attach, meal)
 
     usage = guest_usage(db, host, service_date, config)
     weekly = weekly_usage(db, host, service_date, config)
@@ -453,6 +462,8 @@ def record_alumni_meal(
     moment: datetime | None = None,
     config: ClubConfig | None = None,
     attach: str | None = None,
+    meal: ResolvedPeriod | None = None,
+    actor: str = "kiosk",
 ) -> ScanResult:
     """Log a meal eaten by an alum, against nobody.
 
@@ -471,7 +482,7 @@ def record_alumni_meal(
     phone_value = normalize_phone(phone)
     netid_value = normalize_netid(netid)
 
-    service_date, period, attached = _resolve_meal(db, moment, attach)
+    service_date, period, attached = _resolve_meal(db, moment, attach, meal)
 
     if period is None:
         return ScanResult(
@@ -502,13 +513,13 @@ def record_alumni_meal(
     db.refresh(attendance)
 
     if attached is not None:
-        _audit_attached(db, attendance, attached)
+        _audit_attached(db, attendance, attached, actor)
 
     # Audited unconditionally, including meals within service hours. An alumni
     # meal has no member's name attached elsewhere, so it needs its own trail.
     audit(
         db,
-        actor="kiosk",
+        actor=actor,
         action="alumni.recorded",
         entity_type="attendance",
         entity_id=attendance.id,

@@ -29,6 +29,7 @@ from app.security import hash_password
 from app.services import audit as audit_service
 from app.services import credentials as credential_service
 from app.services import netid as netid_service
+from app.services import past_meals
 from app.services import photos as photo_service
 from app.services import reports
 from app.services import roster_import
@@ -412,6 +413,54 @@ def dashboard(
             "gaps": len(reports.enrollment_gaps(db)),
         },
     )
+
+
+def _past_meal_page(
+    request: Request, db: Session, user: StaffUser,
+    values: dict[str, str], error: str | None = None,
+):
+    day = _parse_date(values.get("day"), _today(db))
+    return templates.TemplateResponse(
+        request, "admin/past_meal.html",
+        {
+            "user": user, "values": values, "day": day, "error": error,
+            "today": datetime.now(get_settings().tz).date(),
+            "periods": past_meals.completed_periods(db, day, datetime.now(timezone.utc)),
+            "members": list(db.scalars(
+                select(Member).order_by(Member.last_name, Member.first_name)
+            )),
+        },
+        status_code=422 if error else 200,
+    )
+
+
+@router.get("/attendance/new")
+def past_meal_form(
+    request: Request,
+    day: str | None = None,
+    kind: str = "member",
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_admin),
+):
+    if kind not in {item.value for item in AttendanceKind}:
+        kind = "member"
+    values = {"day": _parse_date(day, _today(db)).isoformat(), "kind": kind}
+    return _past_meal_page(request, db, user, values)
+
+
+@router.post("/attendance/new")
+async def register_past_meal(
+    request: Request,
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_admin),
+):
+    form = await request.form()
+    values = {key: value for key, value in form.items() if isinstance(value, str)}
+    try:
+        row = past_meals.register(db, values, actor=f"staff:{user.username}")
+    except ValueError as exc:
+        return _past_meal_page(request, db, user, values, error=str(exc))
+    return RedirectResponse(f"/admin?day={row.service_date.isoformat()}", status_code=303)
 
 
 def _meal_history(
