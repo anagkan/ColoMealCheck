@@ -119,6 +119,7 @@
         <td>
           {%- if row.kind == 'guest' -%}
             Guest: {{ row.guest_name }}
+            {% include "admin/guest_labels.html" %}
             {%- if row.guest_netid %} <span class="muted">({{ row.guest_netid }})</span>
             {%- elif row.guest_netid_reason %}
               <span class="muted">(no NetID — {{ row.guest_netid_reason }})</span>

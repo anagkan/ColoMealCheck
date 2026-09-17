@@ -14,6 +14,7 @@ from app.db import get_db
 from app.deps import require_admin, require_staff
 from app.models import (
     Attendance,
+    AttendanceKind,
     ClubSetting,
     Credential,
     MealPeriod,
@@ -410,6 +411,43 @@ def dashboard(
             "gaps": len(reports.enrollment_gaps(db)),
         },
     )
+
+
+def _meal_history(
+    request: Request, db: Session, user: StaffUser, kind: AttendanceKind, month: str | None
+):
+    start, end = month_bounds(_parse_date(month, _today(db)))
+    return templates.TemplateResponse(
+        request,
+        "admin/meal_history.html",
+        {
+            "user": user,
+            "kind": kind.value,
+            "title": "Guest Meals" if kind == AttendanceKind.GUEST else "Alumni Meals",
+            "month_start": start,
+            "rows": reports.meals_by_kind(db, kind, start, end),
+        },
+    )
+
+
+@router.get("/guests")
+def guest_meals(
+    request: Request,
+    month: str | None = None,
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_staff),
+):
+    return _meal_history(request, db, user, AttendanceKind.GUEST, month)
+
+
+@router.get("/alumni")
+def alumni_meals(
+    request: Request,
+    month: str | None = None,
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_staff),
+):
+    return _meal_history(request, db, user, AttendanceKind.ALUMNI, month)
 
 
 @router.get("/members")
@@ -999,7 +1037,7 @@ def report_csv(
             ["service_date", "period", "kind", "member", "puid", "guest_name",
              "guest_netid", "guest_netid_reason", "alumni_name",
              "alumni_class_year", "alumni_netid", "alumni_email", "alumni_phone",
-             "entry_method", "overage", "scanned_at"],
+             "entry_method", "overage", "scanned_at", "guest_is_family", "guest_is_professor"],
             [
                 [
                     r.service_date,
@@ -1018,6 +1056,8 @@ def report_csv(
                     r.entry_method,
                     "yes" if r.is_overage else "",
                     r.scanned_at.isoformat() if r.scanned_at else "",
+                    "yes" if r.guest_is_family else "",
+                    "yes" if r.guest_is_professor else "",
                 ]
                 for r in reports.daily_attendance(db, day)
             ],

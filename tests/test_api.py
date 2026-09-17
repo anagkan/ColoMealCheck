@@ -5,7 +5,9 @@ rather than in front of a club officer.
 """
 from __future__ import annotations
 
-from datetime import datetime, time, timedelta, timezone
+import csv
+import io
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -681,6 +683,60 @@ class TestGuestApi:
             **extra,
         }
 
+    @pytest.mark.parametrize("family,professor", [(True, False), (False, True), (True, True)])
+    def test_exempt_guests_need_no_netid_and_do_not_spend_quota(
+        self, signed_in, member, db, wide_service, family, professor
+    ):
+        payload = self.guest(
+            member, netid="", guest_is_family=family, guest_is_professor=professor
+        )
+        for _ in range(3):
+            response = signed_in.post("/api/guest", json=payload)
+            assert response.status_code == 200
+            body = response.json()
+            assert body["outcome"] == "guest_recorded"
+            assert body["guests"]["used"] == 0
+            assert body["guests"]["remaining"] == 2
+        row = db.get(Attendance, body["attendance_id"])
+        assert row.guest_is_family is family
+        assert row.guest_is_professor is professor
+        assert row.guest_netid is None
+        assert row.guest_netid_reason is None
+        assert row.override_by is None
+
+        # Exempt meals remain in attendance and in the host's history.
+        for path in ("/admin/guests", "/admin", f"/admin/members/{member.id}"):
+            page = signed_in.get(path).text
+            assert "Kim Adeyemi" in page
+            assert "Quota exempt" in page
+            if family:
+                assert '<span class="chip">Family</span>' in page
+            if professor:
+                assert '<span class="chip">Professor</span>' in page
+        exported = list(csv.DictReader(io.StringIO(signed_in.get("/admin/reports/daily.csv").text)))
+        assert len(exported) == 3
+        assert exported[0]["guest_is_family"] == ("yes" if family else "")
+        assert exported[0]["guest_is_professor"] == ("yes" if professor else "")
+
+        # Ordinary guests still have exactly their original monthly allowance.
+        for _ in range(2):
+            assert signed_in.post("/api/guest", json=self.guest(member)).json()["outcome"] == "guest_recorded"
+        assert signed_in.post("/api/guest", json=self.guest(member)).json()["outcome"] == "guest_quota_exceeded"
+        after = signed_in.post("/api/guest", json=payload).json()
+        assert after["outcome"] == "guest_recorded"
+        assert after["guests"]["used"] == 2
+
+    @pytest.mark.parametrize("category", ["guest_is_family", "guest_is_professor"])
+    def test_exempt_guest_still_requires_name_and_valid_optional_netid(
+        self, client, member, wide_service, category
+    ):
+        for invalid in ({"guest_first_name": ""}, {"guest_last_name": ""}, {"guest_netid": "bad-id"}):
+            payload = {**self.guest(member, netid="", **{category: True}), **invalid}
+            assert client.post("/api/guest", json=payload).status_code == 422
+        assert client.post(
+            "/api/guest", json=self.guest(member, **{category: True})
+        ).json()["outcome"] == "guest_recorded"
+
     def test_a_host_can_be_named_by_their_card_instead_of_an_id(
         self, client, member, wide_service
     ):
@@ -1234,12 +1290,77 @@ class TestAdminPages:
 
     @pytest.mark.parametrize(
         "path",
-        ["/admin", "/admin/members", "/admin/analytics", "/admin/reports",
+        ["/admin", "/admin/members", "/admin/guests", "/admin/alumni", "/admin/analytics", "/admin/reports",
          "/admin/schedule", "/admin/settings", "/admin/accounts", "/admin/audit"],
     )
     def test_page_renders(self, signed_in, member, path):
         response = signed_in.get(path)
         assert response.status_code == 200, response.text[:400]
+
+    @pytest.mark.parametrize("path,kind", [("/admin/guests", "guest"), ("/admin/alumni", "alumni")])
+    def test_meal_history_filters_kind_month_and_voided_rows(self, signed_in, db, member, path, kind):
+        for row_kind in ("guest", "alumni", "member"):
+            for label, day, voided in (
+                ("First", date(2026, 8, 1), False),
+                ("Last", date(2026, 8, 31), False),
+                ("Before", date(2026, 7, 31), False),
+                ("After", date(2026, 9, 1), False),
+                ("Voided", date(2026, 8, 15), True),
+            ):
+                db.add(Attendance(
+                    kind=row_kind,
+                    member_id=None if row_kind == "alumni" else member.id,
+                    service_date=day,
+                    scanned_at=datetime.combine(day, time(12)),
+                    voided_at=datetime.now(timezone.utc) if voided else None,
+                    guest_name=f"Guest {label}",
+                    guest_netid="guestnet" if label == "First" else None,
+                    guest_netid_reason="Visiting parent" if label == "Last" else None,
+                    alumni_first_name="Alum",
+                    alumni_last_name=label,
+                    alumni_class_year=2014,
+                    alumni_netid="alumnet",
+                    alumni_email="alum@example.com",
+                    alumni_phone="6095551234",
+                ))
+        db.commit()
+
+        response = signed_in.get(path, params={"month": "2026-08-15"})
+        assert response.status_code == 200
+        body = response.text
+        assert "2 meals recorded in August 2026" in body
+        name = "Guest" if kind == "guest" else "Alum"
+        assert body.index(f"{name} Last") < body.index(f"{name} First")
+        for excluded in ("Before", "After", "Voided"):
+            assert f"{name} {excluded}" not in body
+        if kind == "guest":
+            assert "Alum First" not in body
+            assert f'href="/admin/members/{member.id}">Avery Chen</a>' in body
+            assert "guestnet" in body
+            assert "Visiting parent" in body
+        else:
+            assert "Guest First" not in body
+            for detail in ("2014", "alumnet", "alum@example.com", "6095551234"):
+                assert detail in body
+
+    @pytest.mark.parametrize("path,kind", [("/admin/guests", "guest"), ("/admin/alumni", "alumni")])
+    def test_meal_history_empty_and_invalid_month(self, signed_in, path, kind):
+        response = signed_in.get(path, params={"month": "invalid"})
+        assert response.status_code == 200
+        assert f"No {kind} meals this month." in response.text
+
+    @pytest.mark.parametrize("path", ["/admin/guests", "/admin/alumni"])
+    def test_meal_history_requires_sign_in(self, client, path):
+        assert client.get(path, follow_redirects=False).status_code == 401
+
+    def test_meal_tabs_follow_members(self, signed_in):
+        body = signed_in.get("/admin").text
+        assert (
+            body.index('href="/admin/members"')
+            < body.index('href="/admin/guests"')
+            < body.index('href="/admin/alumni"')
+            < body.index('href="/admin/analytics"')
+        )
 
     def test_member_detail_renders(self, signed_in, member):
         response = signed_in.get(f"/admin/members/{member.id}")

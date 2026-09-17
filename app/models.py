@@ -241,8 +241,10 @@ class Attendance(Base):
     # Not everyone who eats here has a NetID — a visiting parent, an alum, a
     # prospective member's sibling. Rather than let the field be skipped, the
     # popup makes the gap explicit and asks why, and the answer is recorded
-    # here. Exactly one of guest_netid and guest_netid_reason is ever set.
+    # here. Family and professor guests may leave both fields empty.
     guest_netid_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    guest_is_family: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    guest_is_professor: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
 
     # An alum has no PUID on file and no card to tap, so the only way to know
     # who ate is to ask. Name and class year say which alum; an email address or

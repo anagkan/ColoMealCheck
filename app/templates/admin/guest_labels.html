@@ -1,0 +1,3 @@
+{% if row.guest_is_family %}<span class="chip">Family</span>{% endif %}
+{% if row.guest_is_professor %}<span class="chip">Professor</span>{% endif %}
+{% if row.guest_is_family or row.guest_is_professor %}<span class="muted small">Quota exempt</span>{% endif %}

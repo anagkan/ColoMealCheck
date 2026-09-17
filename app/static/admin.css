@@ -32,6 +32,7 @@ a:hover { text-decoration: underline; }
 
 .nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 1.5rem;
   padding: 0.85rem 1.5rem;
@@ -40,8 +41,8 @@ a:hover { text-decoration: underline; }
 }
 .brand { font-weight: 700; font-size: 1.05rem; color: var(--ink); }
 .brand span { color: var(--accent); }
-.links { display: flex; gap: 1.1rem; flex: 1; }
-.links a { color: var(--ink-dim); font-weight: 500; }
+.links { display: flex; gap: 1.1rem; flex: 1; flex-wrap: wrap; }
+.links a { color: var(--ink-dim); font-weight: 500; white-space: nowrap; }
 .links a:hover { color: var(--accent); }
 .logout { display: flex; align-items: center; gap: 0.75rem; margin: 0; }
 .logout .who { color: var(--ink-dim); font-size: 0.9rem; }

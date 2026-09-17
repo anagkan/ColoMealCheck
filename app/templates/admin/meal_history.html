@@ -1,0 +1,59 @@
+{% extends "admin/base.html" %}
+{% block title %}{{ title }}{% endblock %}
+{% block content %}
+
+<header class="page-head">
+  <div>
+    <h1>{{ title }}</h1>
+    <p class="muted">{{ rows | length }} meal{{ '' if rows | length == 1 else 's' }} recorded in {{ month_start.strftime('%B %Y') }}.</p>
+  </div>
+  <form class="inline" method="get" action="{{ '/admin/guests' if kind == 'guest' else '/admin/alumni' }}">
+    <label class="tiny">Month in <input type="date" name="month" value="{{ month_start }}"></label>
+    <button type="submit">Update</button>
+  </form>
+</header>
+
+<table class="grid">
+  <thead>
+    <tr>
+      <th>Date</th><th>Time</th><th>Meal</th>
+      {% if kind == 'guest' %}
+        <th>Guest</th><th>NetID / reason</th><th>Host</th>
+      {% else %}
+        <th>Alumni</th><th>Class year</th><th>NetID</th><th>Contact</th>
+      {% endif %}
+    </tr>
+  </thead>
+  <tbody>
+    {% for row in rows %}
+    <tr>
+      <td>{{ row.service_date | prettydate }}</td>
+      <td class="num">{{ row.scanned_at | localtime }}</td>
+      <td>{{ row.meal_period.name if row.meal_period else '—' }}</td>
+      {% if kind == 'guest' %}
+        <td>{{ row.guest_name or '—' }} {% include "admin/guest_labels.html" %}</td>
+        <td>
+          {% if row.guest_netid %}{{ row.guest_netid }}
+          {% elif row.guest_netid_reason %}
+            <span class="chip">no NetID</span> {{ row.guest_netid_reason }}
+          {% else %}—{% endif %}
+        </td>
+        <td>{% if row.member %}<a href="/admin/members/{{ row.member_id }}">{{ row.member.full_name }}</a>{% else %}—{% endif %}</td>
+      {% else %}
+        <td>{{ row.alumni_name }}</td>
+        <td class="num">{{ row.alumni_class_year or '—' }}</td>
+        <td>{{ row.alumni_netid or '—' }}</td>
+        <td>
+          {% if row.alumni_email %}<div>{{ row.alumni_email }}</div>{% endif %}
+          {% if row.alumni_phone %}<div>{{ row.alumni_phone }}</div>{% endif %}
+          {% if not row.alumni_email and not row.alumni_phone %}—{% endif %}
+        </td>
+      {% endif %}
+    </tr>
+    {% else %}
+    <tr><td colspan="{{ 6 if kind == 'guest' else 7 }}" class="muted">No {{ kind }} meals this month.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% endblock %}

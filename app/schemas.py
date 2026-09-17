@@ -40,7 +40,7 @@ class GuestRequest(BaseModel):
 
     A guest is identified by `guest_netid`, or — for the visiting parent, the
     alum, the sibling who has none — by `guest_netid_reason` saying why there
-    isn't one. The route requires exactly one of the two.
+    isn't one. Family and professor guests may omit both.
     """
 
     # Who is hosting, named either of two ways, because the kiosk does not always
@@ -56,6 +56,8 @@ class GuestRequest(BaseModel):
     guest_last_name: str = Field(default="", max_length=80)
     guest_netid: str = Field(default="", max_length=32)
     guest_netid_reason: str = Field(default="", max_length=255)
+    guest_is_family: bool = False
+    guest_is_professor: bool = False
     staff_pin: str | None = None
     override_reason: str | None = Field(default=None, max_length=255)
     # As on ScanRequest: set when the kiosk is replaying a guest meal it took

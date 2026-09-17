@@ -200,6 +200,16 @@
 
       <p id="guestQuota" class="sub small"></p>
 
+      <label class="check">
+        <input type="checkbox" id="guestIsFamily">
+        <span>Family</span>
+      </label>
+      <label class="check">
+        <input type="checkbox" id="guestIsProfessor">
+        <span>Professor</span>
+      </label>
+      <p class="sub small">Family and professor meals do not count toward the monthly guest quota. NetID is optional for these guests.</p>
+
       <div class="field-grid">
         <div class="field">
           <label class="field-label" for="guestFirstName">Guest first name</label>
@@ -210,17 +220,14 @@
           <input id="guestLastName" class="text-input" autocomplete="off">
         </div>
         <div class="field">
-          <label class="field-label" for="guestNetid">Guest NetID</label>
+          <label id="guestNetidLabel" class="field-label" for="guestNetid">Guest NetID</label>
           <input id="guestNetid" class="text-input" autocomplete="off"
                  autocapitalize="off" autocorrect="off" spellcheck="false"
                  placeholder="ak9981" maxlength="32">
         </div>
       </div>
 
-      <!-- Visiting parents, alumni and siblings have no NetID. The field cannot
-           just be left blank, though: a blank is indistinguishable from a rush,
-           and the guest becomes untraceable. Saying so costs one tick and one
-           sentence, and the sentence is what goes on the record. -->
+      <!-- Other guests without a NetID provide a reason in its place. -->
       <label class="check">
         <input type="checkbox" id="guestNoNetid">
         <span>Guest has no NetID</span>
@@ -359,6 +366,6 @@
      worker's network-first policy. A kiosk may keep one Chromium profile for
      years; changing this token guarantees a corrected script cannot be hidden
      by an older HTTP-cache entry. #}
-  <script src="/static/kiosk.js?v=5"></script>
+  <script src="/static/kiosk.js?v=6"></script>
 </body>
 </html>

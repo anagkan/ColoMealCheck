@@ -818,7 +818,8 @@
    * host is and fill them in).
    *
    * A guest is recorded by name *and* NetID — or, for a guest who has none, by
-   * a stated reason in its place. The kiosk checks the fields before it posts
+   * a stated reason in its place. Family and professor guests may omit both.
+   * The kiosk checks the fields before it posts
    * and the server checks them again; the popup's copy of the rule is there to
    * answer instantly, not to be the rule.
    *
@@ -833,6 +834,7 @@
   let guestHost = null; // { id, full_name, puid }
   let guestHostCard = null; // { value, credentialType }
   let guestSearchTimer = null;
+  let guestQuotaUsage = null;
 
   function guestModalIsOpen() {
     return !guestModal.hidden;
@@ -845,6 +847,7 @@
   }
 
   function renderGuestQuota(guests) {
+    guestQuotaUsage = guests;
     const quota = el("guestQuota");
     if (!guests) {
       // Opened from the bottom button before a host was picked: how many guest
@@ -855,7 +858,7 @@
       return;
     }
     quota.textContent = `${guests.used} of ${guests.quota} guest meals used this month.`;
-    el("guestOverride").hidden = guests.remaining > 0;
+    el("guestOverride").hidden = guestIsExempt() || guests.remaining > 0;
   }
 
   function clearGuestHostResults() {
@@ -865,14 +868,22 @@
   /* ---- "guest has no NetID" ---- */
 
   const guestNoNetid = el("guestNoNetid");
+  const guestIsFamily = el("guestIsFamily");
+  const guestIsProfessor = el("guestIsProfessor");
+
+  function guestIsExempt() {
+    return guestIsFamily.checked || guestIsProfessor.checked;
+  }
 
   function renderGuestNetidFields() {
+    const exempt = guestIsExempt();
+    guestNoNetid.disabled = exempt;
+    if (exempt) guestNoNetid.checked = false;
+    el("guestNetidLabel").textContent = exempt ? "Guest NetID (optional)" : "Guest NetID";
     const none = guestNoNetid.checked;
     const netid = el("guestNetid");
     const reason = el("guestNetidReason");
-    // Both fields stay put and one of them is always dead: disabling rather
-    // than hiding makes it obvious what the tick box just did, and stops the
-    // popup from resizing under somebody who is mid-type.
+    // Keep the optional NetID available for exempt guests who want to give it.
     netid.disabled = none;
     reason.disabled = !none;
     if (none) netid.value = "";
@@ -883,6 +894,14 @@
     setGuestError("");
     renderGuestNetidFields();
     (guestNoNetid.checked ? el("guestNetidReason") : el("guestNetid")).focus();
+  });
+
+  [guestIsFamily, guestIsProfessor].forEach((box) => {
+    box.addEventListener("change", () => {
+      setGuestError("");
+      renderGuestNetidFields();
+      renderGuestQuota(guestQuotaUsage);
+    });
   });
 
   function setGuestHost(member, guests) {
@@ -946,7 +965,9 @@
       el(id).value = "";
     });
     // The next guest is a different person: never inherit the last one's
-    // "no NetID" tick.
+    // categories or "no NetID" tick.
+    guestIsFamily.checked = false;
+    guestIsProfessor.checked = false;
     guestNoNetid.checked = false;
     renderGuestNetidFields();
     guestHostQuery.value = "";
@@ -1088,7 +1109,7 @@
         el("guestNetidReason").focus();
         return;
       }
-    } else if (!netid) {
+    } else if (!netid && !guestIsExempt()) {
       setGuestError(
         "Enter the guest's Princeton NetID, or tick “Guest has no NetID”."
       );
@@ -1096,12 +1117,14 @@
       return;
     }
 
-    const needsOverride = !el("guestOverride").hidden;
+    const needsOverride = !guestIsExempt() && !el("guestOverride").hidden;
     const body = {
       guest_first_name: first,
       guest_last_name: last,
       guest_netid: guestNoNetid.checked ? "" : netid,
       guest_netid_reason: guestNoNetid.checked ? netidReason : "",
+      guest_is_family: guestIsFamily.checked,
+      guest_is_professor: guestIsProfessor.checked,
       occurred_at: new Date().toISOString(),
     };
     // Exactly one of the two, never both: the route reads member_id first, and
@@ -1123,7 +1146,7 @@
       if (result.outcome === "guest_quota_exceeded") {
         // Stay in the popup: the staff PIN is the next thing to happen, and
         // everything already typed is still correct.
-        el("guestOverride").hidden = false;
+        renderGuestQuota(result.guests);
         setGuestError(result.message);
         return;
       }

@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import date
 
 from sqlalchemy import case, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models import Attendance, AttendanceKind, Credential, MealPeriod, Member
 from app.services.club_settings import ClubConfig
@@ -44,6 +44,23 @@ def daily_attendance(db: Session, day: date) -> list[Attendance]:
         select(Attendance)
         .where(Attendance.service_date == day, Attendance.voided_at.is_(None))
         .order_by(Attendance.scanned_at.desc())
+    )
+    return list(db.scalars(stmt))
+
+
+def meals_by_kind(
+    db: Session, kind: AttendanceKind, start: date, end: date
+) -> list[Attendance]:
+    stmt = (
+        select(Attendance)
+        .options(joinedload(Attendance.member), joinedload(Attendance.meal_period))
+        .where(
+            Attendance.kind == kind.value,
+            Attendance.voided_at.is_(None),
+            Attendance.service_date >= start,
+            Attendance.service_date <= end,
+        )
+        .order_by(Attendance.service_date.desc(), Attendance.scanned_at.desc(), Attendance.id.desc())
     )
     return list(db.scalars(stmt))
 

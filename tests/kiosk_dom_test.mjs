@@ -1001,6 +1001,56 @@ async function testNoNetidRequiresAReasonBeforeItWillPost() {
   dom.window.close();
 }
 
+async function testExemptGuestsCanSkipNetidAndQuotaOverride() {
+  for (const selected of [["guestIsFamily"], ["guestIsProfessor"], ["guestIsFamily", "guestIsProfessor"]]) {
+    const { window, calls, dom } = boot({}, (url) => {
+      const scan = alreadyCheckedIn(url);
+      if (scan) return { ...scan, guests: { used: 2, quota: 2, remaining: 0 } };
+      return guestRecorded(url);
+    });
+    const doc = window.document;
+    typeAll(window, "A1B2C3D4");
+    typeKey(window, "Enter");
+    await settle();
+    check("an exhausted quota initially needs an override", !doc.getElementById("guestOverride").hidden);
+    doc.getElementById("guestFirstName").value = "Pat";
+    doc.getElementById("guestLastName").value = "Ortiz";
+    tick(window, "guestNoNetid");
+    for (const id of selected) tick(window, id);
+    check("exempt guests need neither a quota override nor a no-NetID reason",
+      doc.getElementById("guestOverride").hidden &&
+      doc.getElementById("guestNetidReason").disabled &&
+      !doc.getElementById("guestNoNetid").checked &&
+      doc.getElementById("guestNetidLabel").textContent.includes("optional"));
+    for (const id of selected) {
+      doc.getElementById(id).checked = false;
+      doc.getElementById(id).dispatchEvent(new window.Event("change", { bubbles: true }));
+    }
+    check("removing the categories restores the exhausted quota prompt", !doc.getElementById("guestOverride").hidden);
+    click(window, "guestSubmit");
+    await settle();
+    check("an ordinary guest still cannot submit without identification",
+      calls.filter((c) => String(c.url).includes("/api/guest")).length === 0);
+    for (const id of selected) tick(window, id);
+    click(window, "guestSubmit");
+    await settle();
+    const requests = calls.filter((c) => String(c.url).includes("/api/guest"));
+    check("an exempt guest submits without a NetID, reason, or PIN", requests.length === 1 &&
+      requests[0].body.guest_netid === "" && requests[0].body.guest_netid_reason === "" &&
+      requests[0].body.staff_pin === undefined);
+    check("both category flags are sent", requests.length === 1 &&
+      requests[0].body.guest_is_family === selected.includes("guestIsFamily") &&
+      requests[0].body.guest_is_professor === selected.includes("guestIsProfessor"));
+    click(window, "guestMealBtn");
+    await settle();
+    check("the next guest inherits neither category",
+      !doc.getElementById("guestIsFamily").checked && !doc.getElementById("guestIsProfessor").checked &&
+      !doc.getElementById("guestNoNetid").disabled &&
+      !doc.getElementById("guestNetidLabel").textContent.includes("optional"));
+    dom.window.close();
+  }
+}
+
 async function testTheNoNetidTickDoesNotOutliveTheGuest() {
   const { window, dom } = boot({}, (url) => alreadyCheckedIn(url) || guestRecorded(url));
   const doc = window.document;
@@ -1387,6 +1437,7 @@ await testGuestSubmitRefusesAnIncompleteGuest();
 await testNoNetidBoxSwapsTheFieldForAReason();
 await testNoNetidRequiresAReasonBeforeItWillPost();
 await testTheNoNetidTickDoesNotOutliveTheGuest();
+await testExemptGuestsCanSkipNetidAndQuotaOverride();
 await testCancellingThePopupReturnsToIdleWithNothingLeftBehind();
 await testAlumniButtonOpensThePopup();
 await testAlumniSubmitSendsTheWholeAlum();
@@ -1921,6 +1972,35 @@ async function testAGuestMealTakenOfflineIsHostedByTheCard() {
   );
 }
 
+async function testExemptGuestCategoriesSurviveOfflineReplay() {
+  let offline = true;
+  const { window, calls, dom } = boot({}, (url) => {
+    if (url.includes("/api/scan")) return alreadyCheckedIn(url);
+    if (url.includes("/api/guest")) return offline ? OFFLINE : guestRecorded(url);
+    return null;
+  });
+  const doc = window.document;
+  await tapCard(window, "04A1B2C3D4E5F601");
+  doc.getElementById("guestFirstName").value = "Robin";
+  doc.getElementById("guestLastName").value = "Ellis";
+  tick(window, "guestIsFamily");
+  tick(window, "guestIsProfessor");
+  click(window, "guestSubmit");
+  await settle();
+  const queued = stored(window, QUEUE_KEY).filter((item) => item.path === "/api/guest");
+  check("offline exempt meals keep both flags without requiring NetID",
+    queued.length === 1 && queued[0].body.guest_is_family &&
+    queued[0].body.guest_is_professor && queued[0].body.guest_netid === "");
+  offline = false;
+  window.dispatchEvent(new window.Event("online"));
+  await settle();
+  const requests = calls.filter((call) => String(call.url).includes("/api/guest"));
+  check("replay preserves the exemption flags and clears the recorded meal",
+    requests.length === 2 && requests[1].body.guest_is_family &&
+    requests[1].body.guest_is_professor && stored(window, QUEUE_KEY).length === 0);
+  dom.window.close();
+}
+
 /* Online, the host is a resolved member and must stay one — the card path is a
  * fallback, not a replacement. */
 async function testAnOnlineGuestMealStillUsesTheMemberId() {
@@ -2209,6 +2289,7 @@ await testOverlappingFlushesDoNotSendTheSameScanTwice();
 await testTheUnrecordedPanelOpensAndHoldsTheKeyboard();
 await testAnAlumniMealTakenOfflineIsQueued();
 await testAGuestMealTakenOfflineIsHostedByTheCard();
+await testExemptGuestCategoriesSurviveOfflineReplay();
 await testAnOnlineGuestMealStillUsesTheMemberId();
 await testARefusedGuestMealDoesNotQueue();
 await testTheOldQueueFormatIsCarriedAcross();

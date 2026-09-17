@@ -37,9 +37,12 @@ class GuestUsage:
 
 
 def count_guest_meals(db: Session, host_id: int, start: date, end: date) -> int:
+    """Meals that spend the monthly benefit; exempt meals still count in reports."""
     stmt = select(func.count(Attendance.id)).where(
         Attendance.member_id == host_id,
         Attendance.kind == AttendanceKind.GUEST.value,
+        Attendance.guest_is_family.is_(False),
+        Attendance.guest_is_professor.is_(False),
         Attendance.voided_at.is_(None),
         Attendance.service_date >= start,
         Attendance.service_date <= end,

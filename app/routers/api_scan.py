@@ -238,12 +238,12 @@ def guest(
             "Enter the guest's first and last name.",
         )
 
-    # A NetID, or a reason there isn't one — never neither. Skipping the field
-    # silently is the one outcome worth designing against: it is how a guest
-    # list turns back into a list of first names nobody can trace.
+    # Family and professor categories explain why identification is optional.
+    # Other guests still provide a NetID or a reason for having none.
     netid = netid_service.normalize_netid(payload.guest_netid)
     netid_reason = payload.guest_netid_reason.strip()
-    if not netid and not netid_reason:
+    exempt = payload.guest_is_family or payload.guest_is_professor
+    if not netid and not netid_reason and not exempt:
         raise HTTPException(
             status.HTTP_422_UNPROCESSABLE_CONTENT,
             "Enter the guest's Princeton NetID, or tick “Guest has no NetID” "
@@ -268,6 +268,8 @@ def guest(
         guest_last_name=last,
         guest_netid=netid,
         guest_netid_reason=netid_reason,
+        guest_is_family=payload.guest_is_family,
+        guest_is_professor=payload.guest_is_professor,
         moment=moment,
         override_by=override_by,
         override_reason=payload.override_reason,

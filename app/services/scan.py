@@ -310,12 +310,15 @@ def record_guest(
     override_by: str | None = None,
     override_reason: str | None = None,
     entry_method: str = EntryMethod.CSN.value,
+    guest_is_family: bool = False,
+    guest_is_professor: bool = False,
 ) -> ScanResult:
     """Log a guest meal against a host's monthly benefit.
 
     Unlike the weekly allotment, this one blocks: the quota is a real benefit
     with a real cost, so going past it is a staff decision that gets a name and
-    a reason attached.
+    a reason attached. Family and professor guests are recorded without
+    spending this benefit or needing a quota override.
 
     Whether the guest's details are *required* is decided at the edge that
     collects them (see routers/api_scan.py), not here — this layer records what
@@ -350,7 +353,8 @@ def record_guest(
             message="No meal is being served right now.",
         )
 
-    if usage.exhausted and not override_by:
+    exempt = guest_is_family or guest_is_professor
+    if usage.exhausted and not override_by and not exempt:
         return ScanResult(
             outcome=ScanOutcome.GUEST_QUOTA_EXCEEDED,
             member=host,
@@ -377,6 +381,8 @@ def record_guest(
         guest_last_name=last or None,
         guest_netid=netid or None,
         guest_netid_reason=netid_reason or None,
+        guest_is_family=guest_is_family,
+        guest_is_professor=guest_is_professor,
         is_overage=False,
         override_by=override_by,
         override_reason=override_reason,
@@ -412,6 +418,8 @@ def record_guest(
         weekly=weekly,
         guests=usage_after,
         message=(
+            "Guest recorded — this meal does not count toward the monthly guest quota."
+            if exempt else
             f"Guest recorded — {usage_after.used} of {usage_after.quota} guest meals used "
             "this month."
         ),
