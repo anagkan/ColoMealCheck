@@ -162,6 +162,42 @@ const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
 
 /* ------------------------------------------------------------------ */
 
+async function testStrayTypingBeforeCardTap() {
+  const { window, calls, dom } = boot();
+  const sink = window.document.getElementById("cardInput");
+  const serial = "00abcdef12345678";
+  const cases = [
+    ["stray letters", "xyz", serial],
+    ["stray hex digits", "aB0123456789", serial],
+    ["stray punctuation", "!?@-:", serial],
+    ["separated serial", "oops123", "00-ab cd-ef 12-34 56-78"],
+    ["clean tap", "", serial],
+  ];
+
+  for (const [label, prefix, card] of cases) {
+    // No pause between the accidental typing and the tap: clearing only
+    // after an idle timeout would still lose this person's check-in.
+    typeAll(window, prefix);
+    typeAll(window, card);
+    const before = calls.filter((c) => c.url === "/api/scan").length;
+    typeKey(window, "Enter");
+    await settle();
+    const scans = calls.filter((c) => c.url === "/api/scan");
+    check(`${label}: submits only the complete card serial`,
+      scans.length === before + 1 && scans.at(-1).body.value === serial &&
+      scans.at(-1).body.credential_type === "csn",
+      JSON.stringify(scans.at(-1)?.body));
+    check(`${label}: clears the sink for the next tap`, sink.value === "");
+  }
+
+  const before = calls.filter((c) => c.url === "/api/scan").length;
+  typeKey(window, "Enter");
+  await settle();
+  check("empty Enter after a tap does not submit another scan",
+    calls.filter((c) => c.url === "/api/scan").length === before);
+  dom.window.close();
+}
+
 /* The ID box sits on the idle screen, under the tap prompt. A member reaches it
  * by clicking straight into it — there is no button in the way — which means the
  * reader watchdog has to leave the box alone the moment it takes focus. */
@@ -2279,6 +2315,7 @@ async function testTheBatteryIndicatorTracksLevelAndChargingState() {
 }
 
 
+await testStrayTypingBeforeCardTap();
 await testAReplayTheServerDeclinesIsKeptForStaff();
 await testAReplayThatIsRecordedLeavesNothingBehind();
 await testAProxyFailureQueuesAndReplaysTheScan();

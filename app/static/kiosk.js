@@ -138,8 +138,14 @@
     // Belt and braces: if a stray focus ever lands here while someone is
     // typing, do not submit their ID as a card number.
     if (!value || !readerOwnsKeyboard()) return;
+    // The wedge sends a 16-hex-digit CSN followed by Enter. Anything already
+    // in the sink precedes that complete serial, including stray hex digits.
+    // Take the trailing CSN without relying on typing speed or an idle timer.
+    // Accept the same separators as the server; leave nonstandard legacy
+    // values intact so existing cards still go through the usual lookup.
+    const csn = value.replace(/[ -]/g, "").match(/[0-9a-f]{16}$/i);
     // A card tap while a result is on screen is the next person in line.
-    submitScan(value, "csn");
+    submitScan(csn ? csn[0] : value, "csn");
   });
 
   /* ---------------- network ---------------- */
