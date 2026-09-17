@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Request, UploadFile
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.config import get_settings
 from app.db import get_db
@@ -17,6 +17,7 @@ from app.models import (
     AttendanceKind,
     ClubSetting,
     Credential,
+    CredentialType,
     MealPeriod,
     Member,
     MemberStatus,
@@ -450,14 +451,8 @@ def alumni_meals(
     return _meal_history(request, db, user, AttendanceKind.ALUMNI, month)
 
 
-@router.get("/members")
-def member_list(
-    request: Request,
-    q: str = "",
-    status_filter: str = "",
-    db: Session = Depends(get_db),
-    user: StaffUser = Depends(require_staff),
-):
+def _member_query(q: str, status_filter: str):
+    """Keep the roster page and its export in the same order, with the same filters."""
     stmt = select(Member).order_by(Member.last_name, Member.first_name)
     term = q.strip()
     if term:
@@ -470,6 +465,19 @@ def member_list(
         )
     if status_filter:
         stmt = stmt.where(Member.status == status_filter)
+    return stmt
+
+
+@router.get("/members")
+def member_list(
+    request: Request,
+    q: str = "",
+    status_filter: str = "",
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_staff),
+):
+    term = q.strip()
+    stmt = _member_query(term, status_filter)
 
     members = list(db.scalars(stmt))
     enrolled = {
@@ -485,9 +493,49 @@ def member_list(
             "enrolled": enrolled,
             "q": term,
             "status_filter": status_filter,
+            "csv_query": urlencode({"q": term, "status_filter": status_filter}),
             "statuses": [s.value for s in MemberStatus],
             "plans": [p.value for p in PlanType],
         },
+    )
+
+
+@router.get("/members.csv")
+def member_roster_csv(
+    q: str = "",
+    status_filter: str = "",
+    db: Session = Depends(get_db),
+    user: StaffUser = Depends(require_staff),
+):
+    members = db.scalars(
+        _member_query(q, status_filter).options(selectinload(Member.credentials))
+    )
+    rows = []
+    for member in members:
+        # Keep one row per member, including every live CSN if multiple cards
+        # were linked. Never coerce serials to numbers: leading zeros matter.
+        csns = sorted(
+            credential_service.normalize_value(card.value)
+            for card in member.credentials
+            if card.is_active and card.type == CredentialType.CSN.value
+        )
+        rows.append([
+            member.first_name,
+            member.last_name,
+            member.puid,
+            member.netid or "",
+            member.class_year or "",
+            templates.env.filters["planlabel"](member.plan_type),
+            member.status,
+            "; ".join(csns),
+        ])
+    return PlainTextResponse(
+        reports.to_csv(
+            ["First Name", "Last Name", "PUID", "NetID", "Year", "Plan", "Status", "Card CSN"],
+            rows,
+        ),
+        media_type="text/csv",
+        headers={"Content-Disposition": 'attachment; filename="member-roster.csv"'},
     )
 
 

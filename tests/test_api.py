@@ -1508,6 +1508,80 @@ class TestAdminPages:
         assert response.status_code == 409
 
 
+class TestMemberRosterExport:
+    def test_exports_requested_columns_and_full_card_serial(self, signed_in, db, member):
+        member.first_name = 'Avery, "Av"'
+        member.netid = "achen"
+        credential_service.bind_card(db, member, "0012345678901234")
+        credential_service.bind_card(db, member, "987654321", credential_type="prox")
+        db.commit()
+
+        response = signed_in.get("/admin/members.csv")
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/csv")
+        assert response.headers["content-disposition"] == 'attachment; filename="member-roster.csv"'
+        assert list(csv.reader(io.StringIO(response.text))) == [
+            ["First Name", "Last Name", "PUID", "NetID", "Year", "Plan", "Status", "Card CSN"],
+            ['Avery, "Av"', "Chen", "905550001", "achen", "2027", "19 meals", "active", "0012345678901234"],
+        ]
+
+    def test_includes_unlinked_members_and_blanks_for_missing_fields(
+        self, signed_in, db, make_member
+    ):
+        make_member(last_name="Zulu", class_year=None, status="inactive", plan_type="none")
+        revoked = make_member(last_name="Alpha")
+        card = credential_service.bind_card(db, revoked, "00ABCDEF12345678")
+        credential_service.revoke(db, card)
+        db.commit()
+
+        rows = list(csv.DictReader(io.StringIO(signed_in.get("/admin/members.csv").text)))
+        assert [row["Last Name"] for row in rows] == ["Alpha", "Zulu"]
+        assert [row["Card CSN"] for row in rows] == ["", ""]
+        assert rows[1]["NetID"] == rows[1]["Year"] == ""
+        assert rows[1]["Status"] == "inactive"
+        assert rows[1]["Plan"] == "No plan"
+
+    def test_multiple_live_csns_stay_on_one_member_row(self, signed_in, db, member):
+        credential_service.bind_card(db, member, "00abcdef12345678", replace_existing=False)
+        db.commit()
+        rows = list(csv.DictReader(io.StringIO(signed_in.get("/admin/members.csv").text)))
+        assert len(rows) == 1
+        assert rows[0]["Card CSN"] == "00ABCDEF12345678; 04A1B2C3D4E5F601"
+
+    @pytest.mark.parametrize("query", ["Chen", "Avery", "905550001", "achen"])
+    def test_export_uses_page_filters(self, signed_in, db, member, make_member, query):
+        from html import unescape
+        import re
+
+        member.netid = "achen"
+        db.commit()
+        make_member(first_name="Avery", last_name="Chen", status="inactive")
+        make_member(last_name="Other")
+        page = signed_in.get(
+            "/admin/members", params={"q": f" {query} ", "status_filter": "active"}
+        )
+        link = re.search(r'href="([^"]+)">Export CSV</a>', page.text)
+        assert link is not None
+        response = signed_in.get(unescape(link.group(1)))
+        rows = list(csv.DictReader(io.StringIO(response.text)))
+        assert [row["PUID"] for row in rows] == [member.puid]
+
+    def test_no_matches_exports_only_headers(self, signed_in, member):
+        response = signed_in.get("/admin/members.csv", params={"q": "nobody-matches"})
+        rows = list(csv.reader(io.StringIO(response.text)))
+        assert len(rows) == 1
+        assert rows[0][-1] == "Card CSN"
+
+    def test_export_requires_sign_in(self, client):
+        assert client.get("/admin/members.csv", follow_redirects=False).status_code == 401
+
+    def test_staff_can_export(self, signed_in, db, admin_user):
+        admin_user.role = StaffRole.STAFF.value
+        db.commit()
+        assert signed_in.get("/admin/members.csv").status_code == 200
+        assert "Export CSV" in signed_in.get("/admin/members").text
+
+
 class TestAnalytics:
     @pytest.fixture
     def cohort(self, db, make_member):

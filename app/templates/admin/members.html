@@ -13,15 +13,12 @@
       {% endfor %}
     </select>
     <button type="submit">Search</button>
+    {% if user and user.is_admin %}
+      <a class="btn" href="/admin/members/import">Import CSV</a>
+    {% endif %}
+    <a class="btn" href="/admin/members.csv?{{ csv_query }}">Export CSV</a>
   </form>
 </header>
-
-{% if user and user.is_admin %}
-  <p class="muted small">
-    Have the roster as a spreadsheet? <a href="/admin/members/import">Import a CSV</a> —
-    names, PUIDs and plans go in now, cards get linked at the kiosk later.
-  </p>
-{% endif %}
 
 <details class="card">
   <summary>Add a member</summary>
