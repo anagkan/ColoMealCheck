@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import enum
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -109,6 +109,44 @@ def _attached_note(attached: AdjacentPeriod) -> str:
     return f"Checked in before {attached.period.name} opened"
 
 
+def _resolve_meal(
+    db: Session, moment: datetime, attach: str | None
+) -> tuple[date, MealPeriod | None, AdjacentPeriod | None]:
+    """Use the serving meal, or an explicitly chosen adjacent meal when closed."""
+    resolved = resolve_period(db, moment)
+    service_date = resolved.service_date
+    period = resolved.period
+
+    attached = adjacent_period(db, moment, attach) if period is None and attach else None
+    if attached is not None:
+        # The meal moves, and the service date moves with it: an early check-in
+        # at midnight for tomorrow's breakfast belongs to tomorrow's service day
+        # and tomorrow's meal week, not to the day the clock happens to read.
+        period = attached.period
+        service_date = attached.service_date
+
+    return service_date, period, attached
+
+
+def _audit_attached(
+    db: Session, attendance: Attendance, attached: AdjacentPeriod, actor: str = "kiosk"
+) -> None:
+    # Choosing a meal is not a staff override and must not lift duplicate guards.
+    audit(
+        db,
+        actor=actor,
+        action="attendance.outside_service",
+        entity_type="attendance",
+        entity_id=attendance.id,
+        detail={
+            "member_id": attendance.member_id,
+            "period": attached.period.name,
+            "direction": attached.direction,
+            "seconds_away": attached.seconds_away,
+        },
+    )
+
+
 def process_scan(
     db: Session,
     value: str,
@@ -148,17 +186,7 @@ def process_scan(
             submitted_type=credential_type,
         )
 
-    resolved = resolve_period(db, moment)
-    service_date = resolved.service_date
-    period = resolved.period
-
-    attached = adjacent_period(db, moment, attach) if period is None and attach else None
-    if attached is not None:
-        # The meal moves, and the service date moves with it: an early check-in
-        # at midnight for tomorrow's breakfast belongs to tomorrow's service day
-        # and tomorrow's meal week, not to the day the clock happens to read.
-        period = attached.period
-        service_date = attached.service_date
+    service_date, period, attached = _resolve_meal(db, moment, attach)
 
     # Both counters are read after the window is settled, never before, so they
     # are the counters for the week the meal is actually booked into.
@@ -255,23 +283,7 @@ def process_scan(
         )
 
     if attached is not None:
-        # Audited but not marked as an override on the row itself: override_by
-        # is what lifts the one-meal-per-period duplicate guard (see models.py),
-        # and an early check-in must stay under it — otherwise the member could
-        # check in early and again once the window opened, and be charged twice.
-        audit(
-            db,
-            actor=actor,
-            action="attendance.outside_service",
-            entity_type="attendance",
-            entity_id=attendance.id,
-            detail={
-                "member_id": member.id,
-                "period": period.name,
-                "direction": attached.direction,
-                "seconds_away": attached.seconds_away,
-            },
-        )
+        _audit_attached(db, attendance, attached, actor)
 
     if is_overage:
         outcome = ScanOutcome.CHECKED_IN_OVERAGE
@@ -312,6 +324,7 @@ def record_guest(
     entry_method: str = EntryMethod.CSN.value,
     guest_is_family: bool = False,
     guest_is_professor: bool = False,
+    attach: str | None = None,
 ) -> ScanResult:
     """Log a guest meal against a host's monthly benefit.
 
@@ -336,9 +349,7 @@ def record_guest(
     netid_reason = "" if netid else (guest_netid_reason or "").strip()
     display_name = f"{first} {last}".strip() or "Guest"
 
-    resolved = resolve_period(db, moment)
-    service_date = resolved.service_date
-    period = resolved.period
+    service_date, period, attached = _resolve_meal(db, moment, attach)
 
     usage = guest_usage(db, host, service_date, config)
     weekly = weekly_usage(db, host, service_date, config)
@@ -351,6 +362,7 @@ def record_guest(
             weekly=weekly,
             guests=usage,
             message="No meal is being served right now.",
+            offers=adjacent_periods(db, moment),
         )
 
     exempt = guest_is_family or guest_is_professor
@@ -408,6 +420,9 @@ def record_guest(
             },
         )
 
+    if attached is not None:
+        _audit_attached(db, attendance, attached, override_by or "kiosk")
+
     usage_after = guest_usage(db, host, service_date, config)
     return ScanResult(
         outcome=ScanOutcome.GUEST_RECORDED,
@@ -417,6 +432,7 @@ def record_guest(
         service_date=service_date,
         weekly=weekly,
         guests=usage_after,
+        warnings=[_attached_note(attached)] if attached else [],
         message=(
             "Guest recorded — this meal does not count toward the monthly guest quota."
             if exempt else
@@ -436,11 +452,12 @@ def record_alumni_meal(
     netid: str = "",
     moment: datetime | None = None,
     config: ClubConfig | None = None,
+    attach: str | None = None,
 ) -> ScanResult:
     """Log a meal eaten by an alum, against nobody.
 
     No quota and no allotment: an alum is not on a meal plan, so there is no
-    counter to draw down and nothing here can block except the club being shut.
+    counter to draw down. Outside service hours, the alum chooses an adjacent meal.
     The row carries its own identity — there is no member to look it up from
     later, which is why the fields are required at the edge that collects them
     (see routers/api_scan.py) rather than defaulted to a shrug here.
@@ -454,15 +471,14 @@ def record_alumni_meal(
     phone_value = normalize_phone(phone)
     netid_value = normalize_netid(netid)
 
-    resolved = resolve_period(db, moment)
-    service_date = resolved.service_date
-    period = resolved.period
+    service_date, period, attached = _resolve_meal(db, moment, attach)
 
     if period is None:
         return ScanResult(
             outcome=ScanOutcome.OUTSIDE_SERVICE,
             service_date=service_date,
             message="No meal is being served right now.",
+            offers=adjacent_periods(db, moment),
         )
 
     attendance = Attendance(
@@ -485,9 +501,11 @@ def record_alumni_meal(
     db.commit()
     db.refresh(attendance)
 
-    # Audited unconditionally, unlike a guest meal, which is only audited when
-    # staff override the quota. An alumni meal has no member's name attached to
-    # it anywhere else, so this log is the only trail it leaves.
+    if attached is not None:
+        _audit_attached(db, attendance, attached)
+
+    # Audited unconditionally, including meals within service hours. An alumni
+    # meal has no member's name attached elsewhere, so it needs its own trail.
     audit(
         db,
         actor="kiosk",
@@ -510,6 +528,7 @@ def record_alumni_meal(
         period=period,
         service_date=service_date,
         message=f"Alumni meal recorded for {attendance.alumni_name}.",
+        warnings=[_attached_note(attached)] if attached else [],
     )
 
 

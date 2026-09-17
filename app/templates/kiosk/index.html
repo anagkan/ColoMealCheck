@@ -252,6 +252,9 @@
       </div>
 
       <p id="guestError" class="field-error" hidden></p>
+      {% with prefix="guest" %}
+        {% include "kiosk/meal_choices.html" %}
+      {% endwith %}
 
       <div class="panel-actions">
         <button id="guestSubmit" class="action-btn">Record guest meal</button>
@@ -317,6 +320,9 @@
       </div>
 
       <p id="alumniError" class="field-error" hidden></p>
+      {% with prefix="alumni" %}
+        {% include "kiosk/meal_choices.html" %}
+      {% endwith %}
 
       <div class="panel-actions">
         <button id="alumniSubmit" class="action-btn">Record alumni meal</button>
@@ -366,6 +372,6 @@
      worker's network-first policy. A kiosk may keep one Chromium profile for
      years; changing this token guarantees a corrected script cannot be hidden
      by an older HTTP-cache entry. #}
-  <script src="/static/kiosk.js?v=7"></script>
+  <script src="/static/kiosk.js?v=8"></script>
 </body>
 </html>

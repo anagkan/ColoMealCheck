@@ -1,0 +1,12 @@
+<div id="{{ prefix }}AnywayBox" class="anyway-box" hidden>
+  <p class="anyway-head">Early or late? Record this meal for:</p>
+  <div class="anyway-actions">
+    {% for direction in ["previous", "next"] %}
+    <button type="button" class="action-btn anyway-btn{% if direction == 'previous' %} subtle{% endif %}"
+            data-direction="{{ direction }}" hidden>
+      <span class="anyway-meal"></span>
+      <span class="anyway-when"></span>
+    </button>
+    {% endfor %}
+  </div>
+</div>

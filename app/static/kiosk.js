@@ -695,8 +695,6 @@
    * nothing scheduled before now gets one button, and a kiosk that has been
    * told nothing gets none — never a button naming a meal that does not exist. */
 
-  const ANYWAY_BUTTONS = { previous: el("anywayPrev"), next: el("anywayNext") };
-
   // Words, not a clock face: "12:30" beside a meal name reads as a time of day,
   // which is the one thing it is not.
   function describeGap(seconds) {
@@ -716,18 +714,19 @@
 
   // Returns whether anything is being offered, which is what tells renderResult
   // to leave the screen up long enough to read it.
-  function renderAnyway(result) {
+  function renderAnyway(result, boxId = "anywayBox") {
     const offers =
       (result && result.outcome === "outside_service" && result.offers) || [];
-    Object.keys(ANYWAY_BUTTONS).forEach((direction) => {
-      const button = ANYWAY_BUTTONS[direction];
+    const box = el(boxId);
+    box.querySelectorAll("button[data-direction]").forEach((button) => {
+      const direction = button.dataset.direction;
       const offer = offers.filter((item) => item.direction === direction)[0];
       button.hidden = !offer;
       if (!offer) return;
       button.querySelector(".anyway-meal").textContent = offer.period_name;
       button.querySelector(".anyway-when").textContent = describeOffer(offer);
     });
-    el("anywayBox").hidden = offers.length === 0;
+    box.hidden = offers.length === 0;
     return offers.length > 0;
   }
 
@@ -836,6 +835,8 @@
    * have used at the door. Exactly one of the two is ever set. */
 
   const guestModal = el("guestModal");
+  let guestAttach = null;
+  let guestSubmitting = false;
   const guestHostQuery = el("guestHostQuery");
   let guestHost = null; // { id, full_name, puid }
   let guestHostCard = null; // { value, credentialType }
@@ -979,6 +980,8 @@
     guestHostQuery.value = "";
     clearGuestHostResults();
     setGuestError("");
+    guestAttach = null;
+    renderAnyway(null, "guestAnywayBox");
     guestModal.hidden = false;
     if (opts.hostCard) {
       setGuestHostCard(opts.hostCard);
@@ -1094,7 +1097,16 @@
     if (event.key === "Escape" && guestModalIsOpen()) dismissGuestModal();
   });
 
-  el("guestSubmit").addEventListener("click", async () => {
+  el("guestSubmit").addEventListener("click", () => submitGuestMeal());
+  el("guestAnywayBox").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-direction]");
+    if (!button || button.hidden || guestSubmitting) return;
+    guestAttach = button.dataset.direction;
+    submitGuestMeal();
+  });
+
+  async function submitGuestMeal() {
+    if (guestSubmitting) return;
     if (!guestHost && !guestHostCard) {
       setGuestError("Choose the member hosting this guest.");
       guestHostQuery.focus();
@@ -1147,8 +1159,17 @@
       body.override_reason = el("guestReason").value;
     }
 
+    if (guestAttach) body.attach = guestAttach;
+    guestSubmitting = true;
     try {
       const result = await post("/api/guest", body);
+      if (result.outcome === "outside_service") {
+        guestAttach = null;
+        setGuestError(result.message);
+        renderAnyway(result, "guestAnywayBox");
+        return;
+      }
+      renderAnyway(null, "guestAnywayBox");
       if (result.outcome === "guest_quota_exceeded") {
         // Stay in the popup: the staff PIN is the next thing to happen, and
         // everything already typed is still correct.
@@ -1170,8 +1191,10 @@
       enqueue("/api/guest", body, describeGuest(body));
       closeGuestModal();
       renderQueued("Guest saved offline");
+    } finally {
+      guestSubmitting = false;
     }
-  });
+  }
 
   /* ---------------- alumni popup ----------------
    *
@@ -1186,6 +1209,8 @@
    * rule. */
 
   const alumniModal = el("alumniModal");
+  let alumniAttach = null;
+  let alumniSubmitting = false;
   const ALUMNI_FIELDS = [
     "alumniFirstName",
     "alumniLastName",
@@ -1217,6 +1242,8 @@
       el(id).value = "";
     });
     setAlumniError("");
+    alumniAttach = null;
+    renderAnyway(null, "alumniAnywayBox");
     alumniModal.hidden = false;
     releaseReader();
     el("alumniFirstName").focus();
@@ -1252,7 +1279,16 @@
     if (event.key === "Escape" && alumniModalIsOpen()) dismissAlumniModal();
   });
 
-  el("alumniSubmit").addEventListener("click", async () => {
+  el("alumniSubmit").addEventListener("click", () => submitAlumniMeal());
+  el("alumniAnywayBox").addEventListener("click", (event) => {
+    const button = event.target.closest("button[data-direction]");
+    if (!button || button.hidden || alumniSubmitting) return;
+    alumniAttach = button.dataset.direction;
+    submitAlumniMeal();
+  });
+
+  async function submitAlumniMeal() {
+    if (alumniSubmitting) return;
     const first = el("alumniFirstName").value.trim();
     const last = el("alumniLastName").value.trim();
     const classYear = el("alumniClassYear").value.replace(/[^0-9]/g, "");
@@ -1293,8 +1329,17 @@
       occurred_at: new Date().toISOString(),
     };
 
+    if (alumniAttach) body.attach = alumniAttach;
+    alumniSubmitting = true;
     try {
       const result = await post("/api/alumni", body);
+      if (result.outcome === "outside_service") {
+        alumniAttach = null;
+        setAlumniError(result.message);
+        renderAnyway(result, "alumniAnywayBox");
+        return;
+      }
+      renderAnyway(null, "alumniAnywayBox");
       closeAlumniModal();
       renderResult(result);
     } catch (err) {
@@ -1311,8 +1356,10 @@
       enqueue("/api/alumni", body, describeAlumni(body));
       closeAlumniModal();
       renderQueued("Alumni meal saved offline");
+    } finally {
+      alumniSubmitting = false;
     }
-  });
+  }
 
   /* ---------------- chrome ---------------- */
 

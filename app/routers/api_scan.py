@@ -273,6 +273,7 @@ def guest(
         moment=moment,
         override_by=override_by,
         override_reason=payload.override_reason,
+        attach=payload.attach,
     )
     if stale:
         _note_untrusted_time(db, result, payload.occurred_at, override_by or "kiosk")
@@ -375,6 +376,7 @@ def alumni_meal(
         phone=phone,
         netid=alumni_netid,
         moment=moment,
+        attach=payload.attach,
     )
     if stale:
         _note_untrusted_time(db, result, payload.occurred_at, "kiosk")

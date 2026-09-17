@@ -2337,5 +2337,96 @@ await testANormallyLoadedPageStillTrustsItsSeed();
 await testTheKioskRunsWithoutServiceWorkerSupport();
 await testTheBatteryIndicatorTracksLevelAndChargingState();
 
+/* Guest/alumni choices stay in their own forms, including quota and offline retries. */
+async function testVisitorMealChoices(kind, direction, mode = "success") {
+  const endpoint = `/api/${kind}`;
+  const offers = betweenMeals()("/api/scan", {}).offers;
+  const { window, calls, dom } = boot({}, (url, body) => {
+    if (url === endpoint) {
+      if (!body.attach) return { outcome: "outside_service", ok: false,
+        message: "No meal is being served right now.", offers: mode === "empty" ? [] : offers };
+      if (mode === "offline") return OFFLINE;
+      if (mode === "quota" && !body.staff_pin) return {
+        outcome: "guest_quota_exceeded", message: "Staff override required.",
+        guests: { used: 2, quota: 2, remaining: 0 },
+      };
+      return kind === "guest" ? guestRecorded(url) : alumniRecorded(url);
+    }
+    return alreadyCheckedIn(url);
+  });
+  const doc = window.document;
+  // Leave an earlier member scan in memory: a visitor choice must never resend it.
+  typeAll(window, "A1B2C3D4");
+  typeKey(window, "Enter");
+  await settle();
+  if (kind === "guest") {
+    doc.getElementById("guestFirstName").value = "Kim";
+    doc.getElementById("guestLastName").value = "Adeyemi";
+    doc.getElementById("guestNetid").value = "kadeyemi";
+  } else {
+    click(window, "alumniMealBtn");
+    doc.getElementById("alumniFirstName").value = "Casey";
+    doc.getElementById("alumniLastName").value = "Whitman";
+    doc.getElementById("alumniClassYear").value = "2014";
+    doc.getElementById("alumniEmail").value = "casey@example.com";
+  }
+  click(window, `${kind}Submit`);
+  await settle();
+  const box = doc.getElementById(`${kind}AnywayBox`);
+  check(`${kind}: closed service keeps the completed form open`,
+    !doc.getElementById(`${kind}Modal`).hidden &&
+    doc.getElementById(`${kind}LastName`).value === (kind === "guest" ? "Adeyemi" : "Whitman"));
+  if (mode === "empty") {
+    check(`${kind}: no schedule means no meal choices`, box.hidden);
+    dom.window.close();
+    return;
+  }
+  check(`${kind}: offers name both adjacent meals`, !box.hidden &&
+    box.textContent.includes("Lunch") && box.textContent.includes("Dinner"));
+  const choice = box.querySelector(`[data-direction="${direction}"]`);
+  choice.click();
+  choice.click(); // A quick double click must not record two visitor meals.
+  await settle();
+  let posts = calls.filter((c) => c.url === endpoint);
+  check(`${kind}: the choice resubmits this meal once`, posts.length === 2 &&
+    posts[1].body.attach === direction &&
+    calls.filter((c) => c.url === "/api/scan").length === 1);
+  for (const [key, value] of Object.entries(posts[0].body)) {
+    if (key !== "occurred_at") check(`${kind}: preserves ${key}`, posts[1].body[key] === value);
+  }
+  if (mode === "quota") {
+    check("guest: choosing an adjacent meal still requires a quota override",
+      !doc.getElementById("guestModal").hidden && !doc.getElementById("guestOverride").hidden);
+    doc.getElementById("guestPin").value = "1234";
+    doc.getElementById("guestReason").value = "Approved";
+    click(window, "guestSubmit");
+    await settle();
+    posts = calls.filter((c) => c.url === endpoint);
+    check("guest: staff retry retains the selected meal", posts.length === 3 &&
+      posts[2].body.attach === direction && posts[2].body.staff_pin === "1234");
+  }
+  if (mode === "offline") {
+    const queue = JSON.parse(window.localStorage.getItem("colomeal.queue.v2") || "[]");
+    check(`${kind}: offline retry retains the endpoint, details and chosen meal`,
+      queue.length === 1 && queue[0].path === endpoint &&
+      queue[0].body.attach === direction && queue[0].body.occurred_at === posts[1].body.occurred_at);
+  } else {
+    check(`${kind}: selected meal closes onto its own confirmation`,
+      doc.getElementById(`${kind}Modal`).hidden &&
+      doc.getElementById("resultMessage").textContent.includes(kind === "guest" ? "Guest recorded" : "Alumni meal recorded"));
+  }
+  click(window, `${kind}MealBtn`);
+  check(`${kind}: next visitor starts without the previous choice`, box.hidden &&
+    doc.getElementById(`${kind}LastName`).value === "");
+  dom.window.close();
+}
+
+for (const kind of ["guest", "alumni"]) {
+  for (const direction of ["previous", "next"]) await testVisitorMealChoices(kind, direction);
+  await testVisitorMealChoices(kind, "next", "offline");
+  await testVisitorMealChoices(kind, "next", "empty");
+}
+await testVisitorMealChoices("guest", "previous", "quota");
+
 console.log(failures === 0 ? "\nALL PASS" : `\n${failures} FAILURE(S)`);
 process.exit(failures === 0 ? 0 : 1);

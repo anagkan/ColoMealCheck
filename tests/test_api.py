@@ -1723,3 +1723,34 @@ class TestReportExports:
         make_member(first_name="Noel", last_name="Ward", puid="905559876")
         body = signed_in.get("/admin/reports/enrollment-gaps.csv").text
         assert "905559876" in body
+
+
+class TestGuestAlumniAdjacentMeals:
+    @pytest.fixture(params=["guest", "alumni"])
+    def meal_request(self, request, member):
+        if request.param == "guest":
+            return "/api/guest", TestGuestApi().guest(member)
+        return "/api/alumni", TestAlumniApi().alum()
+
+    @pytest.mark.parametrize("direction", ["previous", "next"])
+    def test_offers_and_choice_work_without_a_staff_pin(
+        self, client, db, between_meals, meal_request, direction
+    ):
+        endpoint, payload = meal_request
+        offered = client.post(endpoint, json=payload).json()
+        assert offered["outcome"] == "outside_service"
+        offer = next(o for o in offered["offers"] if o["direction"] == direction)
+        assert db.query(Attendance).count() == 0
+        response = client.post(endpoint, json={**payload, "attach": direction})
+        assert response.status_code == 200
+        result = response.json()
+        assert result["ok"]
+        assert result["period_name"] == offer["period_name"]
+        assert result["service_date"] == offer["service_date"]
+        assert db.get(Attendance, result["attendance_id"]).kind == endpoint.rsplit("/", 1)[1]
+
+    def test_invalid_direction_is_rejected(self, client, db, meal_request):
+        endpoint, payload = meal_request
+        response = client.post(endpoint, json={**payload, "attach": "sideways"})
+        assert response.status_code == 422
+        assert db.query(Attendance).count() == 0
