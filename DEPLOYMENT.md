@@ -746,6 +746,10 @@ A kiosk cannot get stuck on last month's rules.
 
 ## Part 5 — Backups and exports
 
+The standalone [`BACKUPS.md`](BACKUPS.md) is the canonical setup and recovery
+runbook, including automation and a safe scratch-restore test. The condensed
+commands below remain as an operations reference.
+
 Two different things that get confused with each other:
 
 - A **backup** is the whole database, in a form nobody reads and everybody can
