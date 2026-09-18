@@ -1,0 +1,116 @@
+@page {
+  size: Letter;
+  margin: 0.62in 0.68in 0.65in;
+
+  @bottom-center {
+    content: "Colonial Club Meal Check — Attendant Guide   •   " counter(page) " of " counter(pages);
+    color: #555;
+    font-size: 8.5pt;
+  }
+}
+
+html {
+  color: #111;
+  background: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 10.2pt;
+  line-height: 1.38;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 7.2in;
+}
+
+h1,
+h2,
+h3 {
+  color: #000985;
+  break-after: avoid-page;
+  page-break-after: avoid;
+}
+
+h1 {
+  margin: 0 0 0.12in;
+  border-bottom: 2px solid #f5cc00;
+  padding-bottom: 0.08in;
+  font-size: 21pt;
+  line-height: 1.12;
+}
+
+h2 {
+  margin: 0.18in 0 0.07in;
+  font-size: 15pt;
+  line-height: 1.18;
+}
+
+h3 {
+  margin: 0.14in 0 0.04in;
+  font-size: 11.5pt;
+  line-height: 1.2;
+}
+
+p {
+  margin: 0.04in 0 0.09in;
+  orphans: 3;
+  widows: 3;
+}
+
+ul,
+ol {
+  margin: 0.04in 0 0.1in;
+  padding-left: 0.25in;
+}
+
+li {
+  margin: 0.025in 0;
+}
+
+li::marker {
+  color: #000985;
+  font-weight: 700;
+}
+
+strong {
+  color: #000;
+}
+
+table {
+  width: 100%;
+  margin: 0.12in 0 0.16in;
+  border-collapse: collapse;
+  break-inside: avoid-page;
+  page-break-inside: avoid;
+}
+
+th,
+td {
+  border: 1px solid #777;
+  padding: 0.07in 0.09in;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  width: 1.65in;
+  background: #eceefa;
+  color: #000985;
+}
+
+hr {
+  margin: 0.14in 0;
+  border: 0;
+  border-top: 1px solid #888;
+}
+
+.page-break {
+  break-before: page;
+  page-break-before: always;
+}
+
+@media screen {
+  body {
+    padding: 0.5in;
+    box-shadow: 0 0 18px rgba(0, 0, 0, 0.18);
+  }
+}

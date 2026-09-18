@@ -1,0 +1,98 @@
+@page {
+  size: Letter;
+  margin: 0.38in 0.48in;
+}
+
+html {
+  color: #111;
+  background: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 9.5pt;
+  line-height: 1.16;
+}
+
+body {
+  margin: 0 auto;
+  max-width: 7.5in;
+}
+
+h1,
+h2,
+h3 {
+  color: #000985;
+  break-after: avoid-page;
+  page-break-after: avoid;
+}
+
+h1 {
+  margin: 0 0 5pt;
+  border-bottom: 2px solid #f5cc00;
+  padding-bottom: 4pt;
+  font-size: 18pt;
+  line-height: 1.05;
+}
+
+h2 {
+  margin: 7pt 0 3pt;
+  font-size: 12.5pt;
+  line-height: 1.08;
+}
+
+h3 {
+  margin: 5pt 0 2pt;
+  font-size: 10.5pt;
+  line-height: 1.08;
+}
+
+p {
+  margin: 1.5pt 0 4pt;
+  orphans: 2;
+  widows: 2;
+}
+
+ul,
+ol {
+  margin: 1.5pt 0 4pt;
+  padding-left: 0.22in;
+}
+
+li {
+  margin: 0;
+}
+
+li::marker {
+  color: #000985;
+  font-weight: 700;
+}
+
+strong {
+  color: #000;
+}
+
+hr {
+  margin: 5pt 0;
+  border: 0;
+  border-top: 1px solid #888;
+}
+
+.page-break {
+  break-before: page;
+  page-break-before: always;
+}
+
+@media screen {
+  html {
+    font-size: 11pt;
+    line-height: 1.35;
+  }
+
+  body {
+    max-width: 7.2in;
+    padding: 0.45in;
+    box-shadow: 0 0 18px rgba(0, 0, 0, 0.18);
+  }
+
+  h1 { font-size: 21pt; }
+  h2 { font-size: 15pt; }
+  h3 { font-size: 12pt; }
+}
