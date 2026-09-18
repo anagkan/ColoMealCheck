@@ -1,631 +1,268 @@
-# ColoMealCheck
+# Meal Check
 
-Meal attendance for the Colonial Club of Princeton. Members tap their TigerCard
-on a reader at the dining room door — or type their PUID or NetID if they left
-it in their room — and the system records the meal, tracks it against their
-weekly plan (19, 14 or the 9-meal RCA/PAA plan), and manages the two guest meals
-each member gets per month.
+Meal Check is the meal attendance and meal-plan management system for the
+Colonial Club of Princeton. Members check in with a TigerCard, PUID, or NetID;
+staff manage enrollment, guest and alumni meals, attendance, and reporting from
+a browser.
 
-The server runs in Docker on the club LAN. The kiosk is a laptop with an HID
-reader, running Chrome pointed at it.
+The dining-room kiosk keeps check-in quick, while the management dashboard gives
+the club a clear record of who ate, when they ate, and how meals count toward
+weekly plans and monthly guest allowances. Meal Check is self-hosted, supports
+offline check-in, and runs with Docker Compose.
 
----
+## Screenshots
 
-## The card serial is stable — settled
-
-The system identifies members by their card's CSN (serial number), which any
-reader can read without Princeton's encryption keys. That works on iCLASS
-202x/SE cards, whose CSN is fixed. It would **not** work on iCLASS **Seos**
-cards, which emit a 4-byte *random* identifier by design — every tap would look
-like a different card, and the whole approach would collapse.
-
-**TigerCards are iCLASS, not Seos.** This is confirmed, and it is the single
-assumption the design rests on. A tapped card reads as a 16-hex-digit CSN — four
-unique bytes followed by the standard iCLASS tail — matching the format
-`app/services/credentials.py` validates.
-
-The rest of this section is contingency. If Princeton ever migrates to Seos, the
-symptom is a card reporting a different value on each tap; borrow 8–10
-TigerCards across class years, tap each three times, and if the values move,
-pick a fallback:
-
-- **125 kHz Prox side.** If TigerCards are dual-technology, the Prox number is
-  stable and needs no key. Use a prox reader with a Wiegand-to-USB converter and
-  enroll with `credential_type: "prox"` — nothing else changes.
-- **Manual ID entry.** Already built and fully supported. Members type their
-  PUID or NetID; every rule behaves identically. Slower at the door, but correct.
-- **Talk to the ID office.** A reader keyed to Princeton's format outputs the
-  real PACS number tied to the printed PUID. Enroll with `"pacs"`.
-
-The credential layer is deliberately abstract (`app/services/credentials.py`),
-so any of these swaps in without touching the rules engine or the schema.
-
----
-
-## Running it
-
-```bash
-cp .env.example .env
-# Set SECRET_KEY (the file gives you the command), POSTGRES_PASSWORD,
-# STAFF_PIN, and ADMIN_PASSWORD. Then:
-docker compose up -d
-```
-
-`ADMIN_USERNAME` and `ADMIN_PASSWORD` are the protected root-admin login for
-`/admin`. They are read on **every** boot, so changing the password is: edit
-`.env`, then `docker compose up -d`. The root account cannot be changed in the
-app. Changing `ADMIN_USERNAME` renames it rather than leaving a second root
-admin behind. Once signed in, use **Accounts** to add individual admin or staff
-logins, change their roles, reset their passwords, or deactivate them.
-
-Leave `ADMIN_PASSWORD` blank and the first boot generates one instead and prints
-it to `docker compose logs api`, once; the account is then left alone on later
-boots. (`BOOTSTRAP_ADMIN_USERNAME` and `BOOTSTRAP_ADMIN_PASSWORD` were the
-earlier names for these and still work.)
-
-Anyone who can read `.env` can sign in as an admin, so it belongs on the server
-and not on the kiosk laptop. `.gitignore` already excludes it.
-
-The app is at `http://<server-host>:8000`:
-
-| Path | What it is |
+| Dining-room check-in | Staff enrollment |
 | --- | --- |
-| `/` | The kiosk. Tap a card, or type either a nine-digit PUID or a Princeton NetID into the ID box. |
-| | A banner across the top reads **Now serving Dinner · 57:46 left** while a meal is running, and **Next Meal: Breakfast · in 12:30:15** when it is not. Both countdowns tick live. |
-| `/enroll` | Staff page for enrolling a member and their card. Gated by the staff PIN. |
-| `/admin` | The office: roster, analytics, schedule, reports, audit. Gated by a staff login. |
-| `/admin/accounts` | Admin-only account management. The root admin remains controlled by `.env`. |
+| [![Check-in kiosk with TigerCard, PUID, and NetID entry and the current meal countdown](docs/screenshots/ColoMealCheck_LandingPage.png)](docs/screenshots/ColoMealCheck_LandingPage.png) | [![Staff enrollment form for linking a TigerCard, entering member details, and adding a photo](docs/screenshots/ColoMealCheck_EnrollmentPage.png)](docs/screenshots/ColoMealCheck_EnrollmentPage.png) |
+| Tap a TigerCard or enter an ID to check in; record guest and alumni meals from the same screen. | Enroll a new member or link a card to an existing member. |
 
-Two containers, no reverse proxy: Uvicorn serves the API, the pages and the
-photos directly. Postgres and the photo directory are on named volumes.
-
-That is the picture when the server and the kiosk share a LAN. For the real
-deployment — the stack on a server, the kiosk a Chromebook on a different
-network, the two joined over Tailscale — see [`DEPLOYMENT.md`](DEPLOYMENT.md).
-It differs in more than the network: a Chromebook cannot be given Chrome's
-command-line flags, so the kiosk there needs genuine HTTPS rather than the
-insecure-origin exception `run-kiosk.sh` relies on below.
-
-### Enrollment
-
-Enrolling is what *creates* a member. The usual case is someone not in the
-system at all, so the form asks for first name, last name, PUID, NetID, class
-year and meal plan alongside the card and photo, and writes the person and their
-credential in one transaction — there is never a member row with no way to check
-in, or a card bound to nobody. A second mode on the same page, **Already in the
-system**, handles the replacement TigerCard: find the member, tap the new card,
-and their old one is retired automatically.
-
-A member is identified by **two** things, both required: the PUID printed on
-their card, and the NetID every other Princeton system knows them by. The NetID
-is what makes a roster reconcilable against anything outside this app, and
-enrollment is the only moment the member is standing there to be asked for it —
-so unlike a guest's, it has no "has none" escape hatch. It is stored lowercase,
-unique across members, searchable anywhere a PUID is, and carried into every
-member CSV.
-
-The column itself is nullable, because members enrolled before it existed have
-no NetID on file and inventing one would be worse than leaving the gap visible.
-The members list prints a dash for each of them — that dash is the backfill
-worklist, which is why blank is accepted in the admin edit form and refused at
-enrollment.
-
-All three identifiers are checked for shape before anything is written: a card
-CSN must be 16 hexadecimal digits, a PUID nine decimal digits, a NetID 2–8
-letters and digits starting with a letter. Case and the separators some readers
-emit are normalized away first, so `04a1-b2c3-d4e5-f601` is stored as
-`04A1B2C3D4E5F601`, and `SOkafor` as `sokafor`. Every rule lives on the page
-*and* on `/api/enroll` and `/api/enroll/new` — the page for a message staff can
-act on while the member is still standing there, the API so a truncated read
-cannot become a card that never scans. Scans themselves are deliberately
-unchecked, so credentials enrolled before these rules keep working.
-
-**Conflicts refuse rather than merge.** A PUID or NetID already on file is
-rejected by name; a card that already scans as somebody else is treated as a
-mis-tap. At an enrollment desk both are almost always a typo or a stray tap, and
-quietly attaching a second row to someone already enrolled — or moving a card
-off an existing member — is far harder to notice than an error message.
-
-The page complains at the field as it is typed rather than saving it for the
-submit button: a bad card read is far cheaper to fix while the card is still in
-someone's hand. The message appears 200ms after typing stops — the reader types
-all 16 digits in a burst, and per-keystroke checking would flash a complaint
-across every good tap — and disappears the instant the value is right.
-
-Enrollment is a separate page rather than a panel over the kiosk: it is slow,
-staff-driven work involving a photo, and it must not occupy the check-in screen
-while a queue forms behind it. When an unrecognized card is tapped, the kiosk
-shows a red band with a **Staff: link this card** button that carries the card
-value across to `/enroll`, so nobody has to tap twice.
-
-### Running from the published image
-
-For someone who wants to try the kiosk without a copy of the source.
-`docker-compose.deploy.yml` pulls a built image from GHCR instead of building
-`api` from this directory, and reads the same `.env` as above.
-
-The image is private, so pulling it needs a GitHub token with `read:packages`:
-
-```bash
-docker login ghcr.io -u <your-github-username>
-docker compose -f docker-compose.deploy.yml up -d
-docker compose -f docker-compose.deploy.yml logs api   # admin password, if generated
-```
-
-Access is governed by this repository's collaborator list rather than a
-permission list of its own — that is what the `org.opencontainers.image.source`
-label in the Dockerfile buys: it links the package to the repository, so adding
-someone here is all it takes.
-
-That file tracks `:latest`, which CI rewrites on every merge to `main`. Anyone
-running it gets each change on their next `docker compose pull` — convenient
-while the app is being tried out, and a hazard once a meal service depends on
-it, because a restart can move the kiosk onto a build nobody chose.
-
-Pin it before that point. Every CI build also publishes the short commit SHA as
-a bare tag, so the build of `ca55f6f` is
-`ghcr.io/anagkan/colomealcheck:ca55f6f`. Those are never rewritten.
-
-CI publishes on its own; the rest of this section is for doing it by hand, which
-matters when the workflow is the thing that is broken.
-
-```bash
-docker buildx build \
-  --platform linux/amd64,linux/arm64 \
-  -t ghcr.io/anagkan/colomealcheck:0.2.0 \
-  -t ghcr.io/anagkan/colomealcheck:latest \
-  --push .
-```
-
-Both architectures, always. This is built on an Apple Silicon Mac and will run
-on whatever the club has lying around; an image pushed for one architecture
-fails on the other with `exec format error`, which says nothing about what
-actually went wrong. That needs a builder on the `docker-container` driver — the
-default one silently cannot produce a multi-architecture manifest, and accepts
-`--platform` anyway:
-
-```bash
-docker buildx create --name colomeal --driver docker-container --bootstrap --use
-```
-
-Check the result before handing it to anyone, and bump
-`docker-compose.deploy.yml` if it has been pinned by then:
-
-```bash
-docker buildx imagetools inspect ghcr.io/anagkan/colomealcheck:0.2.0
-```
-
-Both `linux/amd64` and `linux/arm64` should be listed. The `unknown/unknown`
-entries alongside them are build provenance, not stray platforms.
-
-### Kiosk laptop
-
-```bash
-./run-kiosk.sh colonial-server.local 8000
-```
-
-This launches Chrome in kiosk mode with two flags that are **not optional**:
-
-```
---unsafely-treat-insecure-origin-as-secure=http://<host>:8000
---user-data-dir=$HOME/.colomealcheck-kiosk
-```
-
-Two browser features the kiosk depends on exist only in a *secure context*, and
-a plain-HTTP LAN address is not one. The webcam API (`getUserMedia`) is the
-first: without these flags `navigator.mediaDevices` is `undefined` and
-enrollment photos fail **silently**. Service workers are the second, which is
-what lets the kiosk start with the server away — see below. The flag is also
-ignored unless a separate profile directory is given, so it is both flags or
-neither.
-
-Both failures are quiet by nature, and each says so where it can: the
-enrollment screen detects the missing webcam API and offers a file-upload
-fallback rather than a dead button, and `kiosk.js` writes a line to the console
-when it finds no `navigator.serviceWorker`. Launch through `run-kiosk.sh` and
-neither arises.
-
-If you later want the app reachable from more than the one laptop, put TLS in
-front of it. Nothing in the app assumes HTTP.
-
-**Always open the kiosk at the same address.** The offline queue below lives in
-browser storage, which is keyed to the exact origin. Reaching the same server by
-IP one day and by hostname the next gives you two separate, empty queues, and
-anything still waiting under the other one will not sync.
-
-### When the network drops
-
-Check-ins, guest meals and alumni meals are all taken offline and replayed when
-the server comes back. Each carries the time it was actually eaten, so a meal
-taken at 18:05 and synced at 18:40 still lands in dinner, in the right meal week.
-Replays are attempted every 20 seconds and whenever the browser regains its
-connection. The queue survives a reload and a browser restart.
-
-Six things are worth knowing before relying on it:
-
-- **The page starts without the server, but only from a cache it already has.**
-  A service worker (`app/static/sw.js`) keeps a copy of the door screen — the
-  page, `kiosk.js`, `kiosk.css` and the crest — so the kiosk still opens after a
-  power cut that brings the laptop back before the server. It has to have loaded
-  the kiosk successfully at least once on that browser profile for there to be
-  anything to open. The cache is a fallback and never the normal path: every
-  load goes to the network first and refreshes the cache behind it, so a kiosk
-  cannot end up quietly running last month's rules.
-- **The browser profile has to survive the reboot too.** Both the cache and the
-  queue live in it, so `run-kiosk.sh` keeps the profile at
-  `$HOME/.colomealcheck-kiosk` rather than under `/tmp`, which most Linux
-  systems clear on boot — losing both at exactly the moment they are wanted.
-  Older installs kept it in the temp directory; the script moves it across on
-  the next launch rather than starting empty, since it may still hold scans
-  waiting to be replayed. Delete that directory and the kiosk is back to needing
-  the server in order to start.
-- **A kiosk booted from cache does not know the schedule.** The meal banner is
-  rendered server-side, so a cached copy carries whatever meal was being served
-  when it was cached. Rather than announce breakfast over dinner, the banner
-  reads **Offline — meal times unavailable** until `/api/status` answers, and
-  fills itself in the moment the server is back.
-- **The result screen goes blind.** The server is what turns a card into a
-  person, so an offline check-in shows "Saved offline" with no name, photo or
-  weekly count. Staff cannot confirm who tapped until it syncs.
-- **A guest meal offline is hosted by a card, not a name.** The member search
-  needs the server, so the host taps their own card and uses **+ Guest** on the
-  result. The card is resolved to a member on replay, exactly as a tap would be.
-- **Twenty-four hours.** Past that the meal can no longer be filed under the
-  right day, so the kiosk stops trying and hands it to staff instead.
-
-Anything that cannot be recorded — an unenrolled card, a guest meal past quota,
-a meal that sat too long — is not discarded. It goes to a red **scans not
-recorded** badge in the kiosk header, listing the card or the name, the time and
-the reason, and stays there until staff clear it. Those need entering by hand
-from the admin screens; the badge is the only sign they exist.
-
-### Reader setup
-
-The OMNIKEY 5427CK runs in **keyboard wedge** mode. Before opening the app, tap
-a card into a text editor and confirm 16 hex digits appear followed by a
-newline. Reader problems surface here, not in the app.
-
-The working configuration, for a reader ever reset or replaced: CSN as the only
-data field, `HEX` string format, `[ENTER]` post-stroke, US keyboard layout,
-wedge encryption off, no pre-strokes, no padding or truncation. These live in
-the reader's own web tool at `http://192.168.63.99/`, served over its CDC-EEM
-interface — reachable from **Windows only**, with HID's OMNIKEY 5x27 EEM driver
-installed before the reader is first plugged in. macOS never binds that
-interface, so the kiosk laptop cannot reconfigure the reader.
-
-Do **not** configure a prefix. Nothing strips one: `normalizeCard` in
-`app/static/enroll.js` removes only whitespace and hyphens, and both it and
-`app/services/credentials.py` require exactly 16 hex digits, so a prefix fails
-every enrollment and every lookup. Stray typing is kept out of a scan by
-`readerOwnsKeyboard()` in `app/static/kiosk.js`, not by a prefix. A trailing
-space is harmless — trimmed on both entry paths and stripped again server-side.
-
-If nothing appears in the text editor, check what reader you actually have
-before debugging the app. A PC/SC-only reader — the OMNIKEY 5x21 family, and
-most CCID readers — presents no keyboard to the operating system and can never
-type, so the kiosk will never see a scan no matter how it is configured. See
-[`bridge/README.md`](bridge/README.md) for the fallback: a small local process
-that reads serials over PC/SC and feeds them to the kiosk page. It is inert
-unless `KIOSK_BRIDGE_URL` is set.
-
----
-
-## How the rules work
-
-Every rule lives in `app/services/scan.py::process_scan`, and the entry method
-(tapped card vs typed PUID/NetID) changes nothing except one recorded field.
-
-| Situation | What happens |
+| Member roster | Analytics |
 | --- | --- |
-| Meal within plan | Checked in. Green band with the running count. |
-| **Past the weekly allotment** | **Recorded anyway**, flagged as an overage, amber band. Never blocked. |
-| Second scan, same meal period | Refused as a duplicate, and the guest popup opens with the member filled in — a second tap almost always means they are signing a guest in. Staff can force a genuine second meal; it's audited. |
-| Membership not `active` | Red banner, meal **still recorded** and flagged. |
-| Outside serving hours | Nothing recorded; the member is still shown — along with a **Check in anyway** box offering the meals either side of now. |
-| **Third guest meal in a month** | **Blocked.** Staff override with a typed reason releases it, into the audit log. |
-| Alumni meal | Recorded against nobody, no quota. Needs a name, a class year and one contact detail. |
-| Unrecognized card | Staff-gated enrollment: create the member, capture a photo, bind the card. |
+| [![Member roster with search, CSV import and export, meal plans, membership status, and linked-card status](docs/screenshots/ColoMealCheck_MembersPage.png)](docs/screenshots/ColoMealCheck_MembersPage.png) | [![Analytics dashboard with date and member filters, meal totals, overages, and participation breakdowns](docs/screenshots/ColoMealCheck_AnalyticsPage.png)](docs/screenshots/ColoMealCheck_AnalyticsPage.png) |
+| Search and manage members, review card enrollment, and import or export the roster. | Review meal usage and participation across class years, meal plans, and membership statuses. |
 
-Design decisions worth knowing:
+Select a screenshot to view it at full size.
 
-- **Overages warn, they never block.** A counter is not a reason to turn away
-  someone holding a tray. The overage list is a billing report, resolved later.
-- **Guest meals are a separate bucket.** Hosting three guests does not spend any
-  of a member's own 19, 14 or 9, and a member over their weekly plan still has
-  guest meals available.
-- **A guest is identified, not just labelled.** The popup records the guest's
-  first name, last name and Princeton NetID against the hosting member, so the
-  club can still answer "who was this?" a month later. It opens from the **Guest
-  Meal** button at the bottom of the kiosk — which asks who is hosting — or from
-  a member's second tap in a meal period, which fills the host in already.
-- **A guest with no NetID says so, and why.** Visiting parents, alumni and
-  siblings have none, so the popup offers a **Guest has no NetID** tick box that
-  swaps the field for a required reason. It can never simply be left blank: a
-  blank is indistinguishable from a rush at the door, and the reason is what
-  makes the row traceable afterwards. Exactly one of the two is ever stored, and
-  both appear in the daily attendance CSV.
-- **An alumni meal belongs to nobody.** An alum is not on the roster, so the
-  **Alumni Meal** button asks for no member at all and the row it writes is the
-  only record the meal leaves: first name, last name, class year, and an email
-  address *or* a phone number — either one, but not neither. That last rule is
-  the whole point of the popup: there is nothing to recover a contact detail
-  from once the alum has walked away, and a record nobody can be reached from is
-  worth no more than no record at all. A NetID is asked for too and is the one
-  **optional** field — many alumni keep one for life and it is the cleanest link
-  back to the member they used to be, but plenty have let theirs lapse, and a
-  NetID identifies an alum without reaching them, so it can neither be required
-  nor stand in for a contact detail. Alumni meals draw down no allotment and no
-  guest quota, are counted separately on the day view, and carry their identity
-  into the daily CSV. This is the only kind of meal whose `member_id` is NULL,
-  which is why every per-member report filters on `kind` — see
-  `app/models.py::Attendance`.
-- **Being a few minutes early is not a reason to come back later.** With nothing
-  being served, the kiosk names the meal that just closed and the one about to
-  open — "Dinner, starts in 12 min" — and either can be checked into on the
-  spot. It needs no staff PIN, unlike forcing a second meal: arriving early for
-  dinner is not an offence, and the alternative is fetching a member of staff
-  every time somebody beats the doors. Three things keep it honest. The choice
-  is only ever honoured when nothing is open, so it can never move a meal off
-  the window that is actually serving. The meal is booked against *its own*
-  service date, so a 7 am tap that reaches back to last night's dinner lands in
-  the right day and the right meal week. And the row is a plain check-in rather
-  than a staff override, which means the one-meal-per-period guard still holds —
-  check in early and tap again once dinner opens, and the second tap is refused
-  as the duplicate it is. Every one is written to the audit log as
-  `attendance.outside_service`.
-- **The meal week starts Monday.** A Sunday dinner is the last meal of its week;
-  Monday breakfast opens a fresh allotment. Nothing rolls over.
-- **Guest quota resets on the 1st** of the calendar month, not on a rolling
-  30-day window.
-- **Service dates, not timestamps.** Every meal stores a `service_date` computed
-  in club-local time at write time, and every report groups by it. This is what
-  makes the DST transitions non-events — see `tests/test_periods.py`, which pins
-  down both of them.
+## Features
 
-The 19-meal plan means "every meal we serve": the default schedule is
-breakfast/lunch/dinner on weekdays plus brunch/dinner on weekends, which is
-exactly 19 windows. The admin schedule page shows this count and warns if an
-edit breaks it. The 14-meal plan is just a smaller number — a 14-plan member
-eating breakfast spends one of their 14 on it. The **RCA/PAA** plan is smaller
-again at 9 meals a week, and carries the same two guest meals a month as every
-other plan, since the guest quota is club-wide and does not scale with the plan.
+### Dining-room check-in
 
-| Meal | Days | Window |
+- **TigerCard, PUID, and NetID entry.** Tap a linked card or enter an ID manually.
+  Members on the roster can use manual entry before their cards are enrolled.
+- **Immediate feedback.** Results show the member's name, photo when available,
+  meal-plan usage, and any overage or membership warning.
+- **Live meal status.** The kiosk displays the current meal and time remaining,
+  or a countdown to the next service.
+- **Duplicate protection.** A second check-in for the same meal is prevented and
+  opens the guest form with the member selected as host. Authorized staff can
+  record a genuine second meal with an audited override.
+- **Early and late meals.** When no service is open, members, guests, and alumni
+  can select the previous or next meal. Attendance is recorded against that
+  meal's service date.
+- **Undo.** Recent check-ins can be undone within the configured time window.
+- **Dedicated kiosk display.** The app supports a full-screen browser or
+  installed web app, with connection status, queued-meal indicators, and a
+  battery indicator where the browser supports it.
+
+### Meal plans and allowances
+
+Meal Check includes 19-meal, 14-meal, RCA/PAA (9-meal), and no-plan membership
+options. Administrators can change weekly allotments, the first day of the meal
+week, and the monthly guest allowance.
+
+| Rule | Behavior |
+| --- | --- |
+| Weekly allowance | Resets on Monday by default; unused meals do not roll over. |
+| Member exceeds their plan | The meal is recorded and flagged as an overage for staff review. |
+| Member has a non-active status | The meal is recorded with a membership warning. |
+| Guest allowance | Two meals per member per calendar month by default, separate from the member's weekly plan. |
+| Guest allowance exhausted | Additional non-exempt guest meals require a staff override and reason. |
+| Family and professor guests | Meals are recorded without using the host's guest allowance. |
+| Alumni meals | Recorded independently of member plans and guest allowances. |
+
+### Guest and alumni meals
+
+**Guest meals** are linked to a hosting member. Staff can start from a member's
+check-in result or search for a host from the Guest Meal form. Each guest record
+includes a first and last name, plus a Princeton NetID or a reason the guest has
+no NetID. Family and professor categories are exempt from the monthly quota and
+may omit the NetID and reason. These meals still appear in attendance and reports.
+
+**Alumni meals** require no member host. The form records the alum's name, class
+year, and at least one contact method: email or phone. A Princeton NetID is
+optional. Dedicated Guest Meals and Alumni Meals pages provide monthly histories
+with guest identities, hosts, categories, and alumni contact details.
+
+### Member roster and enrollment
+
+- **Member profiles.** Manage names, PUIDs, NetIDs, class years, meal plans,
+  membership status, notes, and photos. Profiles show current usage, linked
+  cards, and recent attendance.
+- **Search and export.** Find members by name, PUID, or NetID, filter by status,
+  and export the roster as CSV.
+- **CSV roster import.** Preview additions, updates, unchanged rows, and errors
+  before importing. Members are matched by PUID; blank update cells preserve
+  existing values, and invalid rows are skipped with explanations. Imports
+  preserve linked cards and photos.
+- **Staff enrollment.** Create a member and link their TigerCard in one step,
+  with a required PUID and NetID and an optional webcam photo or uploaded image.
+  Field validation and conflict checks help prevent incorrect enrollments.
+- **Replacement cards.** Link a new card to an existing member and automatically
+  retire the old one. Staff can also revoke cards from member profiles.
+- **Enrollment tracking.** An enrollment-gaps report lists active members who
+  still need a card linked.
+
+CSV imports require `first_name`, `last_name`, and `puid`. Optional columns are
+`netid`, `class_year`, `plan_type`, and `status`. Common headers such as
+“First Name” and “Class Year” are accepted. Cards are linked through enrollment.
+
+### Attendance management
+
+The daily dashboard shows member, guest, and alumni totals by meal, alongside
+individual entries, entry methods, overages, and warnings. Staff can select a
+past date, export daily attendance, and remove incorrect entries.
+
+Administrators can **register past meals** for members, guests, and alumni by
+choosing a service date and a completed meal period. Duplicate checks, member
+overages, guest quotas, and category exemptions apply. Entries are marked as
+admin entries, and the audit log records who added them and when. Past-meal
+registration uses saved period times and current plan and quota settings.
+
+### Reports and analytics
+
+Operational reports include:
+
+- Weekly meal usage, remaining allowances, overages, and guest meals hosted.
+- Monthly overages and guest-meal totals by host.
+- Daily attendance, including guest and alumni details.
+- Enrollment gaps and member roster exports.
+
+The Analytics page supports any date range, with filters for class year, meal
+plan, membership status, name, PUID, and NetID. Sortable member metrics include
+meals eaten, meals per week, share of plan used, days attended, guests hosted,
+overages, and last attendance. It also identifies active members with no meals
+in the selected period.
+
+Club-wide breakdowns by class year, plan, and status show participation and usage
+across the membership. Analytics CSV exports preserve the selected date range,
+filters, and sort order.
+
+### Schedule and club settings
+
+Administrators can add and retire meal windows, choose which windows count
+toward weekly allowances, and configure service that runs past midnight. Meals
+are assigned to service dates in the club's time zone, including overnight
+service and daylight-saving transitions. The schedule page shows weekly meal
+capacity and flags a mismatch with the full meal plan.
+
+The default schedule serves 19 meals per week:
+
+| Meal | Days | Hours |
 | --- | --- | --- |
-| Breakfast | Mon–Fri | 8:00 – 10:00 am |
-| Lunch | Mon–Fri | 11:45 am – 1:45 pm |
-| Brunch | Sat–Sun | 11:30 am – 1:30 pm |
-| Dinner | every day | 5:45 – 7:45 pm |
+| Breakfast | Monday–Friday | 8:00–10:00 am |
+| Lunch | Monday–Friday | 11:45 am–1:45 pm |
+| Brunch | Saturday–Sunday | 11:30 am–1:30 pm |
+| Dinner | Every day | 5:45–7:45 pm |
 
-These are the seeded defaults in `app/seeds/meal_periods.py`. `seed_meal_periods`
-only populates an **empty** table, so changing that file does not touch a
-database that already has a schedule — edit those windows at `/admin/schedule`,
-or update the rows directly. Editing times in place keeps the row IDs, so past
-attendance stays attached to the meal it was eaten at.
+Club settings also control the kiosk result-display duration and undo window.
+Changes take effect without redeploying the application.
 
-All of the numbers (19, 14, 9, 2, the week start day) live in the `settings`
-table and are editable at `/admin/settings`. There are no magic numbers in the
-code.
+### Staff access and audit history
 
----
+Individual staff and administrator accounts provide access to the management
+dashboard. Staff handle routine roster and attendance work; administrators also
+manage imports, past-meal registration, schedules, club settings, accounts, and
+audit history.
 
-## Day one, before anyone has a card
+Administrators can create accounts, change roles, reset passwords, and deactivate
+access. The protected root administrator is configured on the server. A separate
+staff PIN authorizes kiosk enrollment and overrides.
 
-Manual PUID or NetID entry needs no card enrollment. Create the roster in
-`/admin/members`, and members can eat immediately by typing either ID at the
-kiosk while cards get linked over the first week or two. `/admin/reports` has
-an **enrollment gaps** list — active members with no card linked — which is the
-list to work through.
+The audit log records actions such as quota overrides, forced check-ins,
+attendance corrections, past-meal entries, card changes, roster imports, and
+changes to member plans or status.
 
-### Importing the roster from a spreadsheet
+### Offline operation
 
-The club has the roster as a sheet long before it has any card serials, so
-`/admin/members/import` (admin only) takes a CSV of everything *except* the
-card. Required columns are `first_name`, `last_name` and `puid`; `netid`,
-`class_year`, `plan_type` and `status` are optional, and a blank one falls back
-to the same defaults the "Add a member" form offers. Header spelling is
-forgiving — "First Name", "NetID" and "Class Year" all match — and any column
-the importer does not recognise is listed as ignored rather than treated as an
-error.
+The kiosk saves member check-ins, guest meals, and alumni meals locally when the
+server is unavailable. It automatically retries when connectivity returns,
+preserving the original meal time for entries within the 24-hour replay window.
+The queue survives browser restarts when browser storage is retained.
 
-Uploading previews; it does not write. The screen shows what would be added,
-what would be updated and with which values, what already matches, and every
-row it cannot use with the reason why — a malformed PUID, a NetID somebody else
-holds, a plan name that is not a plan. Only a second click imports, and the
-plan is recomputed against the database at that moment rather than trusted from
-the preview. Rows with problems are skipped, not fatal: a file with three bad
-lines and two hundred good ones imports the two hundred.
+A previously loaded kiosk can reopen from its local cache when used over HTTPS
+or another supported secure browser context. Offline results show that a meal
+was saved; names, photos, usage counts, and member search require the server.
+Guests can be queued by having the host tap their card and selecting **+ Guest**.
 
-Rows are matched to members by PUID, which makes a re-upload safe. Uploading
-the same file twice changes nothing; uploading a corrected one updates only the
-cells that differ. A blank cell for somebody already on file leaves that value
-alone rather than clearing it, because rosters arrive half-filled and a missing
-NetID column must not wipe the NetIDs collected at the kiosk. Credentials and
-photos are never touched by an import.
+Entries that expire or cannot be accepted appear in a persistent **scans not
+recorded** list for staff follow-up and manual registration. Keep the kiosk on
+the same web address and browser profile so its queue and cache remain available.
 
-There is deliberately **no card column**. A CSN is bound to a member at the
-kiosk, where somebody is standing there to confirm whose card it is — so
-everyone imported this way lands on the enrollment-gaps list and taps in over
-the following week. Each import writes one `roster.imported` entry to the audit
-log with the filename and the counts.
+## Getting started
 
----
+You need Docker with Docker Compose on the server and a browser on the kiosk.
+A compatible card reader enables TigerCard entry; manual PUID and NetID entry
+also work.
 
-## Registering past meals
+You do not need to clone the repository or build the Docker image. Download
+[`docker-compose.deploy.yml`](docker-compose.deploy.yml) as `docker-compose.yaml`
+to run the prebuilt image from GitHub Container Registry.
 
-Admins can select **Register past meal** on the attendance, Guest Meals, or
-Alumni Meals page. Choose the service date and meal type, click **Show meal
-periods**, and select the completed period and the member or guest/alumni details.
-Periods still serving and future periods cannot be registered this way.
+1. Download [`docker-compose.deploy.yml`](docker-compose.deploy.yml) and save it
+   as `docker-compose.yaml` in a new directory on the server. Download
+   [`.env.example`](.env.example) into the same directory and save it as `.env`.
 
-Member duplicate protection and weekly overage rules still apply. Guest meals
-use the selected month's quota; exceeding it requires an explicit override and
-reason. Family and professor exemptions still apply, and alumni meals require
-a name, class year, and email or phone.
+2. Edit `.env` to set `SECRET_KEY`, `POSTGRES_PASSWORD`, `STAFF_PIN`, and
+   `ADMIN_PASSWORD`. Set `ADMIN_USERNAME` and `TIMEZONE` as needed. The example
+   file includes a command to generate a secret key.
 
-The meal appears on the selected date in attendance and reports, marked as an
-Admin entry. Its timestamp uses the period's start time; the audit log records
-who added it and when. Retired periods are available too. Since schedule and
-plan changes have no effective-date history, registration uses saved period
-times and the member's current plan and quota settings.
+3. From that directory, start the application. Docker Compose downloads the
+   images automatically:
 
-## Analytics
+   ```bash
+   docker compose up -d
+   ```
 
-`/admin/reports` answers *who owes what this week*. `/admin/analytics` answers
-*how is the club actually being used* — over any date range (default: the last
-30 days), sliceable by class year, meal plan, status, name or PUID.
+   If the image requires authentication, first run
+   `docker login ghcr.io -u <your-github-username>` using a GitHub token with
+   `read:packages` permission and access to the package.
 
-Every column in the member table sorts by clicking its heading: meals eaten,
-meals per week, share of plan used, days attended, guest meals hosted, overages,
-last seen, and the member fields themselves. Above it are club-wide breakdowns
-by class year, plan and status, each showing headcount, meals, meals per member
-and what share of the group ate at all. The breakdowns deliberately describe the
-whole club rather than the filtered slice — otherwise filtering to one class
-year would show that class as 100% of the membership.
+4. Open `http://<server-host>:8000/admin`, sign in, and add or import the roster.
+   Review the schedule and club settings, then open the kiosk at
+   `http://<server-host>:8000/`.
 
-The **CSV** button exports exactly what is on screen: same window, same filters,
-same order.
+| Page | Address |
+| --- | --- |
+| Check-in kiosk | `/` |
+| Staff card enrollment | `/enroll` |
+| Attendance dashboard | `/admin` |
+| Member roster | `/admin/members` |
+| Guest and alumni histories | `/admin/guests`, `/admin/alumni` |
+| Analytics and reports | `/admin/analytics`, `/admin/reports` |
+| Schedule and club settings | `/admin/schedule`, `/admin/settings` |
+| Account management and audit history | `/admin/accounts`, `/admin/audit` |
 
-Two derived columns are worth knowing:
+The root administrator's configured password is applied at startup. To change
+it, update `.env` and run `docker compose up -d`. If `ADMIN_PASSWORD` is left
+blank on first startup, Meal Check generates a password and prints it once in
+`docker compose logs api`. Keep `.env` on the server.
 
-- **Plan used** is meals-per-week against the member's weekly allotment. It is
-  blank rather than 0% for members with no plan — there is no denominator, and
-  0% would read as "never eats" instead of "pays per meal".
-- **Dormant** counts members who are `active` but ate nothing in the window.
-  That is either someone who has quietly stopped eating here or a card that was
-  never enrolled properly; both are worth a look.
+The application and PostgreSQL run in separate containers, with persistent
+volumes for the database and member photos. Database migrations and initial
+settings are applied automatically at startup. To update to the latest published
+image, run `docker compose pull` followed by `docker compose up -d` from the
+same directory.
 
-Sorting puts rows with nothing to sort by at the bottom in *both* directions.
-"No class year on file" is not the highest class year, and a member who has
-never eaten here is not the most recently seen.
+If you want to build from source instead, clone the repository and run
+`docker compose up -d --build` with the default `docker-compose.yml`.
 
----
+For the dining-room deployment, follow the [deployment guide](DEPLOYMENT.md),
+which covers private access through Tailscale, HTTPS, and Chromebook kiosk setup.
+HTTPS enables webcam capture, offline startup, and web-app installation. For a
+supported desktop Chrome kiosk on the local network, the repository includes
+[`run-kiosk.sh`](run-kiosk.sh).
 
-## Development
+### Card readers
 
-```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
-npm ci                            # jsdom, for the browser JavaScript tests
-.venv/bin/python -m pytest        # 424 tests, ~35s
-```
+Meal Check accepts a keyboard-wedge reader that types a stable card serial and
+presses Enter. For the standard TigerCard enrollment flow, configure the reader
+to output the full 16-character hexadecimal serial with no prefix, padding, or
+truncation. A reader using PC/SC can connect through the optional
+[local reader bridge](bridge/README.md).
 
-Tests run against SQLite, which honours the same partial unique indexes used on
-Postgres, so the duplicate guard is exercised for real rather than mocked. The
-API tests render every admin template, so a broken Jinja reference fails in CI
-rather than in front of a club officer.
+## Guides and operations
 
-`tests/test_kiosk_dom.py` runs the real `kiosk.js` against the real rendered
-kiosk page under jsdom. It exists because the kiosk has two input paths
-competing for one keyboard — the HID reader (which *is* a keyboard, typing into
-a hidden sink) and a person typing their PUID or NetID. Getting focus wrong there
-silently submits someone's ID as a card number, or appends a previous person's
-half-typed digits to the next card scan. Both have happened.
-
-The rule the tests pin down: **the reader sink owns the keyboard only on the
-idle and result screens.** On any screen with something to type into, the human
-owns it — and on every screen transition back, focus is *forcibly* reclaimed and
-both buffers cleared, rather than politely requested.
-
-These are skipped if node or jsdom is missing, so contributors without node
-still get a clean run. `REQUIRE_DOM_TESTS=1` turns that skip into a hard error —
-CI sets it, because there a missing install is indistinguishable from a pass.
-
-The same file covers the meal banner's two countdowns. Both count down from a
-*duration* the server supplies, re-synced every minute, rather than from a
-timestamp compared against the laptop's own clock — a kiosk with a wrong clock
-would otherwise display a nonsense countdown. `seconds_remaining` and
-`next_period` in `services/periods.py` convert to UTC before subtracting, so a
-window crossing the spring-forward reports the two hours actually left rather
-than the three the clock face moved. When either countdown reaches zero the
-kiosk re-asks the server what is true rather than assuming the next state.
-
-`next_period` searches a full week ahead, so after Sunday dinner the banner
-names Monday breakfast rather than the following weekend's brunch, and it orders
-candidates by clock time rather than `sort_order` — that column is a display
-preference and nothing stops it disagreeing with the timetable. With no active
-windows at all, the banner falls back to **Outside Meal Hours**.
-
-`previous_period` is its mirror image, and feeds the other half of the "check in
-anyway" offer. It searches the same full week backwards, so at 7 am on a Monday
-the meal that just closed is Sunday's dinner rather than nothing. It also keeps
-looking for one day past the first window it finds, because a window that wraps
-midnight closes on the day *after* the day it is listed under: a Friday late
-meal ending at 01:00 closes after a Saturday window that ended at 00:30, so the
-day a window is filed under is not enough to order two of them by.
-
-It also runs `enroll.js` against the rendered `/enroll` page, for a related
-reason: that page submits to two different endpoints depending on its mode.
-Posting a new member to the link-a-card endpoint merely fails, but posting a
-replacement card to the create endpoint would try to duplicate a person who
-already exists. Which endpoint gets picked is only observable from a browser, so
-it is asserted there.
-
-```
-app/
-  services/           the rules. scan.py is the one decision function.
-    scan.py           check in, guest meal, alumni meal, undo
-    periods.py        instant -> (service_date, meal period); week/month bounds
-    allotment.py      weekly usage vs plan
-    guests.py         monthly guest quota
-    alumni.py         contact details for a meal with no member behind it
-    netid.py          the NetID rule, shared by members and guests
-    credentials.py    card <-> member binding, reissue, revocation
-    club_settings.py  the editable numbers behind every rule
-    reports.py        aggregations, member analytics and CSV
-    photos.py         enrollment photo storage
-    audit.py          overrides and forced entries, with an actor
-  routers/            HTTP. Thin — all logic is in services/.
-  models.py           schema, including the two partial unique indexes
-  templates/kiosk/    the door screen
-  templates/admin/    the office screens
-  static/sw.js        service worker: boots the door screen without the server
-  static/manifest.webmanifest
-bridge/               PC/SC fallback for a reader that cannot type
-tests/                424 tests; start with test_scan_rules.py
-```
-
-Schema changes: edit `app/models.py`, then
-`alembic revision --autogenerate -m "..."`. The initial revision builds from
-metadata deliberately (the partial indexes are dialect-specific); later ones
-should be ordinary autogenerated revisions.
-
-### Backups
-
-Two volumes matter: `pgdata` and `photos`.
-
-```bash
-docker compose exec -T db pg_dump -U colonial colomealcheck | gzip > backup-$(date +%F).sql.gz
-docker run --rm -v colomealcheck_photos:/p -v "$PWD":/out alpine \
-  tar czf /out/photos-$(date +%F).tar.gz -C /p .
-```
-
-Worth putting on a cron job to somewhere off the server.
-
----
-
-## Before launch: things for the club to decide
-
-The system stores PUIDs and photographs of students. Worth agreeing with club
-officers, and writing down:
-
-- Who gets an admin account, and who only gets staff access.
-- How long attendance history is retained. A year covers any billing dispute.
-- Where backups live and who can read them.
-
-Two security notes on the current deployment: the app trusts the club LAN
-(check-in needs no login, since a queue at dinner is no place for one), and the
-staff PIN is shared. Both are appropriate for a dining room and both are logged
-— every override and forced entry has an actor in `/admin/audit`. If the server
-is ever exposed beyond the club LAN, revisit both.
-
----
+- [Kiosk quick start](docs/KIOSK_QUICK_START_GUIDE.md) — daily check-in and common
+  attendant tasks.
+- [Kiosk attendant guide](docs/KIOSK_ATTENDANT_GUIDE.md) — enrollment, replacement
+  cards, guests, alumni, offline recovery, and troubleshooting.
+- [Deployment guide](DEPLOYMENT.md) — server, network, HTTPS, and kiosk setup.
+- [Backups and recovery](BACKUPS.md) — database and photo backups, automation,
+  restoration, and recovery procedures.
+- [Reader bridge](bridge/README.md) — connecting and operating a PC/SC reader.
 
 ## License
 
-Licensed under the Apache License, Version 2.0. The full terms are in
-[`LICENSE`](LICENSE); the attribution notice is in [`NOTICE`](NOTICE).
-
-You may use, modify and redistribute this, including for another eating club.
-In return the license asks three things: pass along a copy of the license, mark
-any files you changed as changed, and carry the `NOTICE` file forward so the
-original authorship stays attached to the code.
+Meal Check is licensed under the Apache License, Version 2.0. See
+[LICENSE](LICENSE) and [NOTICE](NOTICE).
