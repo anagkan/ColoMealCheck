@@ -1,6 +1,6 @@
-# Meal Check
+# Colo Meal Check
 
-Meal Check is the meal attendance and meal-plan management system for the
+Colo Meal Check is the meal attendance and meal-plan management system for the
 Colonial Club of Princeton. Members check in with a TigerCard, PUID, or NetID;
 staff manage enrollment, guest and alumni meals, attendance, and reporting from
 a browser.
