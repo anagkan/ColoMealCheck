@@ -69,12 +69,12 @@
       <td class="num">{{ m.class_year or '—' }}</td>
       <td>{{ m.plan_type | planlabel }}</td>
       <td>
-        {% if m.status == 'active' %}<span class="chip ok">active</span>
-        {% else %}<span class="chip stop">{{ m.status }}</span>{% endif %}
+        {% if m.status == 'active' %}<span class="chip ok">Active</span>
+        {% else %}<span class="chip stop">{{ m.status | capitalize }}</span>{% endif %}
       </td>
       <td>
-        {% if m.id in enrolled %}<span class="chip ok">linked</span>
-        {% else %}<span class="chip warn">none</span>{% endif %}
+        {% if m.id in enrolled %}<span class="chip ok">Linked</span>
+        {% else %}<span class="chip warn">None</span>{% endif %}
       </td>
     </tr>
     {% else %}
